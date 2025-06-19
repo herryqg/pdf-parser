@@ -1108,9 +1108,9 @@ def create_tounicode_cmap(font_ref, encoding_name='/WinAnsiEncoding'):
 
 replace_text(
     input_pdf="./inputs/m2.pdf",
-    output_pdf="output_page02.pdf",
+    output_pdf="output.pdf",
     target_text="MADE IN THAILAND",
-    replacement_text="1234567890abcdefghijklmnopqrstuvwxyz ",
+    replacement_text="1234567890zx ",
     page_num=0,  # 页码从0开始，0表示第一页
     ttf_file=""
 )
