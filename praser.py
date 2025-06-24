@@ -2,59 +2,6 @@ import pikepdf
 import re
 import os
 
-def ensure_glyph_and_width(ttf_path, new_chars):
-    """
-    确保TTF文件中新增字符有对应的glyf和宽度，优先尝试用新增字符自身的glyf和宽度，
-    若TTF不包含该字符，则用已有的数字或拉丁字母作fallback，并打印调试信息。
-    """
-    from fontTools.ttLib import TTFont
-    font = TTFont(ttf_path)
-    glyf_table = font['glyf']
-    hmtx_table = font['hmtx']
-    cmap_table = None
-    for table in font['cmap'].tables:
-        if table.isUnicode():
-            cmap_table = table
-            break
-    if cmap_table is None:
-        raise ValueError("找不到cmap表")
-    cmap = cmap_table.cmap
-
-    changed = False
-    for char in new_chars:
-        code = ord(char)
-        if code in cmap:
-            print(f"✅ 字符 {char} ({code}) 已存在于 cmap，glyf: {cmap[code]}")
-            continue  # 已存在
-        # 优先用目标字符本身的 glyf
-        if code in cmap:
-            ref_glyph = cmap[code]
-            ref_width, ref_lsb = hmtx_table[ref_glyph]
-            print(f"✅ 新增字符 {char} ({code}) 使用自身 glyf {ref_glyph}")
-        else:
-            # fallback: 找到第一个数字或拉丁字母
-            ref_glyph = None
-            for fallback in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ':
-                if ord(fallback) in cmap:
-                    ref_glyph = cmap[ord(fallback)]
-                    ref_width, ref_lsb = hmtx_table[ref_glyph]
-                    print(f"⚠️ 字符 {char} ({code}) 缺失，使用 {fallback} 的 glyf {ref_glyph} 作为 fallback")
-                    break
-            if not ref_glyph:
-                ref_glyph = list(hmtx_table.keys())[0]
-                ref_width, ref_lsb = hmtx_table[ref_glyph]
-                print(f"⚠️ 字符 {char} ({code}) 及 fallback 均缺失，使用首个 glyf {ref_glyph}")
-        new_glyph = f"uni{code:04X}"
-        glyf_table[new_glyph] = glyf_table[ref_glyph]
-        hmtx_table[new_glyph] = (ref_width, ref_lsb)
-        cmap[code] = new_glyph
-        changed = True
-
-    if changed:
-        font.save(ttf_path)
-
-
-
 
 def parse_cmap(cmap_str):
     cmap = {}
@@ -67,6 +14,9 @@ def parse_cmap(cmap_str):
             end = int(end_hex, 16)
             target = int(target_hex, 16)
             for i in range(start, end + 1):
+                if i > 0xFF:
+                    # 跳过多字节编码，当前工具链仅关注单字节区
+                    continue
                 cmap[bytes([i])] = chr(target + (i - start))
             continue
 
@@ -76,12 +26,17 @@ def parse_cmap(cmap_str):
             code_hex, target_hex = char_match.groups()
             code = int(code_hex, 16)
             target = int(target_hex, 16)
+            if code > 0xFF:
+                # 跳过多字节编码
+                continue
             cmap[bytes([code])] = chr(target)
 
     return cmap
 
+
 def decode_pdf_string(pdf_bytes, cmap):
     return ''.join(cmap.get(bytes([b]), '?') for b in pdf_bytes)
+
 
 def encode_pdf_string(unicode_text, cmap):
     reverse = {v: k for k, v in cmap.items()}
@@ -91,6 +46,7 @@ def encode_pdf_string(unicode_text, cmap):
             raise ValueError(f"字符 {c} 在 cmap 中未找到映射，无法编码。")
         encoded.append(reverse[c])
     return b''.join(encoded)
+
 
 def escape_pdf_string(text):
     """为PDF文本添加转义符"""
@@ -111,8 +67,6 @@ def escape_pdf_string(text):
     return result
 
 
-
-
 def get_font_cmaps_from_reference(reference_pdf):
     """从PDF中获取完整的字体映射表"""
     pdf = pikepdf.open(reference_pdf)
@@ -121,7 +75,7 @@ def get_font_cmaps_from_reference(reference_pdf):
         if "/Resources" not in page or "/Font" not in page["/Resources"]:
             continue
         font_dict = page["/Resources"]["/Font"]
-        font_names = [str(name) for name in font_dict if str(name).startswith("/TT")]
+        font_names = get_truetype_font_names(font_dict)
         for font_name in font_names:
             font_ref = font_dict[pikepdf.Name(font_name)]
             if "/ToUnicode" not in font_ref:
@@ -130,6 +84,7 @@ def get_font_cmaps_from_reference(reference_pdf):
             cmap_str = cmap_bytes.decode("utf-8", errors="ignore")
             font_cmaps[font_name] = parse_cmap(cmap_str)
     return font_cmaps
+
 
 def count_common_mappings(cmap1, cmap2):
     """计算两个映射表中相同映射的数量"""
@@ -176,6 +131,7 @@ def find_best_matching_fonts(cmaps1, cmaps2, min_similarity=0.2, top_k=3):
     matches.sort(key=lambda x: x[2], reverse=True)
     return matches
 
+
 def merge_cmaps(original_cmap, additional_cmap, font_name="", log_list=None):
     """
     合并字体映射，只补全缺失映射项，避免覆盖已有的原始映射。
@@ -190,7 +146,8 @@ def merge_cmaps(original_cmap, additional_cmap, font_name="", log_list=None):
             if merged[k] != v:
                 overwritten += 1
                 if log_list is not None:
-                    log_list.append(f"⚠️ 警告: 字体 {font_name} 中编码 {k.hex()} 已映射为 {merged[k]}，参考映射想改为 {v}，已忽略。")
+                    log_list.append(
+                        f"⚠️ 警告: 字体 {font_name} 中编码 {k.hex()} 已映射为 {merged[k]}，参考映射想改为 {v}，已忽略。")
         else:
             merged[k] = v
             added += 1
@@ -198,6 +155,7 @@ def merge_cmaps(original_cmap, additional_cmap, font_name="", log_list=None):
     if log_list is not None:
         log_list.append(f"🧩 映射合并完成：保留原有 {len(original_cmap)}，新增 {added}，冲突跳过 {overwritten}")
     return merged
+
 
 def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
     import os
@@ -211,47 +169,49 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
 
     print(f"\n=== 开始处理字体 {font_name} ===")
     pdf = pikepdf.open(pdf_path)
-    
+
     # 首先收集这个字体在所有页面中使用的所有字符
     all_font_chars = set()
     # 收集原始CMap，确保我们只添加新的映射，不覆盖现有的
     original_cmap = {}
-    
+
     for page_idx, page in enumerate(pdf.pages):
         if "/Resources" not in page or "/Font" not in page["/Resources"]:
             continue
-            
+
         font_dict = page["/Resources"]["/Font"]
         if pikepdf.Name(font_name) not in font_dict:
             continue
-            
+
         # 获取页面内容
         content_objects = page['/Contents']
-        combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects, pikepdf.Array) else content_objects.read_bytes()
+        combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects,
+                                                                                       pikepdf.Array) else content_objects.read_bytes()
         content_raw = combined.decode("latin1")
-        
+
         # 找到所有文本
         text_pattern = re.compile(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]')
         font_pattern = re.compile(r'/([A-Za-z0-9]+)\s+\d+\s+Tf')
         current_font = None
-        
+
         # 遍历找到使用此字体的所有文本
-        for match in re.finditer(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf', content_raw):
+        for match in re.finditer(
+                r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf', content_raw):
             font_match = font_pattern.search(match.group(0))
             if font_match:
                 current_font = '/' + font_match.group(1)
                 continue
-                
+
             if current_font != font_name:
                 continue
-                
+
             text_match = text_pattern.search(match.group(0))
             if text_match:
                 is_tj = match.group(0).strip().endswith('TJ')
                 inner_text = text_match.group(2) if is_tj else text_match.group(1)
                 text_content_for_decode = inner_text.replace('\\', '')
                 encoded_bytes = text_content_for_decode.encode("latin1")
-                
+
                 # 使用当前字体的映射解码
                 font_ref = font_dict[pikepdf.Name(font_name)]
                 if "/ToUnicode" in font_ref:
@@ -266,24 +226,24 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                         # 将所有字符添加到集合
                         all_font_chars.update(decoded_text)
                     except:
-                        print(f"⚠️ 第{page_idx+1}页某段文本解码失败，已跳过")
-    
+                        print(f"⚠️ 第{page_idx + 1}页某段文本解码失败，已跳过")
+
     print(f"📊 字体 {font_name} 在PDF中使用的所有字符: {', '.join(sorted(all_font_chars))}")
     print(f"📊 原始CMap映射数量: {len(original_cmap)}")
-    
+
     # 合并原始映射和新映射，优先保留原始映射
     merged_cmap = original_cmap.copy()
     added_count = 0
-    
+
     # 只添加新的映射，不修改现有映射
     for k, v in new_cmap.items():
         if k not in merged_cmap:
             merged_cmap[k] = v
             added_count += 1
             print(f"➕ 添加新映射: <{k.hex().upper()}> -> {v} (U+{ord(v):04X})")
-    
+
     print(f"📊 合并后CMap映射数量: {len(merged_cmap)}, 新增: {added_count}")
-    
+
     for page in pdf.pages:
         if "/Resources" in page and "/Font" in page["/Resources"]:
             font_dict = page["/Resources"]["/Font"]
@@ -376,10 +336,10 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                         for k, v in new_cmap.items():
                             if k not in original_cmap:
                                 new_chars_mapping[k[0]] = v
-                        
+
                         # 存储原始PDF中已有的编码->字符映射
                         original_chars = {}
-                        
+
                         # 仅基于已有 PDF 中定义的字符计算宽度比例，避免连锁偏差
                         char_width_ratios = {}
                         for i in range(original_len):
@@ -399,9 +359,10 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                             if char_glyph:
                                 ttf_width = ttf_font['hmtx'][char_glyph][0]
                                 if ttf_width > 0:
-                                    char_width_ratios[char_unicode] = (pdf_width / ttf_width)*0.97
+                                    char_width_ratios[char_unicode] = (pdf_width / ttf_width) * 0.97
 
-                        default_ratio = sum(char_width_ratios.values()) / len(char_width_ratios) if char_width_ratios else 1.0
+                        default_ratio = sum(char_width_ratios.values()) / len(
+                            char_width_ratios) if char_width_ratios else 1.0
 
                         # 只处理新增字符的宽度
                         for code, char in new_chars_mapping.items():
@@ -410,7 +371,7 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                             if code > 255 or code < first_char:
                                 print(f"⚠️ 跳过非法编码: {code} (超出范围或小于 FirstChar {first_char})")
                                 continue
-                                
+
                             # 判断是否为真正的新增字符
                             is_new_char = True
                             if code in original_chars and original_chars[code] == char:
@@ -418,19 +379,20 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                             elif char in all_font_chars:
                                 is_new_char = False
                                 print(f"ℹ️ 字符 '{char}' 在PDF其他位置已使用此字体，视为已有字符")
-                            
+
                             # 如果不是新字符，跳过处理
                             if not is_new_char:
                                 continue
-                                
+
                             char_unicode = ord(char)
                             char_glyph = cmap_table.cmap.get(char_unicode) if cmap_table else None
-                            
+
                             if char_glyph:
                                 ttf_width = ttf_font['hmtx'][char_glyph][0]
                                 ratio = char_width_ratios.get(char_unicode, default_ratio)
                                 new_width = int(round(ttf_width * ratio))
-                                print(f"✅ 新增字符宽度: '{char}' (U+{char_unicode:04X}), TTF宽度: {ttf_width}, 比例: {ratio:.3f} → PDF宽度: {new_width}")
+                                print(
+                                    f"✅ 新增字符宽度: '{char}' (U+{char_unicode:04X}), TTF宽度: {ttf_width}, 比例: {ratio:.3f} → PDF宽度: {new_width}")
                             else:
                                 new_width = int(round(sum(widths) / len(widths)))
                                 print(f"⚠️ 无TTF支持: '{char}' (U+{char_unicode:04X}), 使用平均宽度: {new_width}")
@@ -439,7 +401,7 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
                                 default_width = int(round(sum(widths) / len(widths)))
                                 while len(widths) < index:
                                     widths.append(default_width)
-                                    print(f"🔧 填充缺失宽度至 index={len(widths)-1}, 默认宽度: {default_width}")
+                                    print(f"🔧 填充缺失宽度至 index={len(widths) - 1}, 默认宽度: {default_width}")
                                 widths.append(new_width)
                                 print(f"➕ 宽度添加完成: '{char}' (编码 {hex(code)}) 宽度为 {new_width}")
                             else:
@@ -455,6 +417,7 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap):
     pdf.save(output_path)
     print(f"\n=== 处理完成，保存到: {output_path} ===")
     return output_path
+
 
 def analyze_font_mappings(input_pdf, output_txt="font_mapping_analysis.txt"):
     """分析PDF字体映射并输出到文本文件"""
@@ -472,6 +435,7 @@ def analyze_font_mappings(input_pdf, output_txt="font_mapping_analysis.txt"):
         f.write("\n".join(analysis))
     print(f"📊 字体映射分析已保存到: {output_txt_path}")
 
+
 def print_character_stream_mapping(text, encoded_bytes, cmap, log_list=None):
     """
     打印字符流映射表，显示每个字符的：
@@ -486,7 +450,7 @@ def print_character_stream_mapping(text, encoded_bytes, cmap, log_list=None):
     mapping_info.append("-" * 50)
 
     for i, char in enumerate(text):
-        byte = encoded_bytes[i:i+1]
+        byte = encoded_bytes[i:i + 1]
         byte_hex = byte.hex().upper()
         unicode_hex = f"U+{ord(char):04X}"
         stream_repr = repr(bytes([byte[0]]).decode('latin1'))
@@ -499,6 +463,7 @@ def print_character_stream_mapping(text, encoded_bytes, cmap, log_list=None):
         print(line)
         if log_list is not None:
             log_list.append(line)
+
 
 def print_rendering_mapping(font_ref, char, code, log_list=None):
     """
@@ -577,6 +542,7 @@ def print_rendering_mapping(font_ref, char, code, log_list=None):
         if log_list is not None:
             log_list.append(line)
 
+
 def get_font_encoding_mapping(font_ref):
     """
     获取字体的编码映射关系
@@ -596,6 +562,7 @@ def get_font_encoding_mapping(font_ref):
                         current_code += 1
     return encoding_map
 
+
 def is_safe_code(code):
     """
     判断编码是否安全（不会直接显示为可读字符）
@@ -608,7 +575,22 @@ def is_safe_code(code):
         return False
     return True
 
-def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=0, ttf_file=None, log_path="replace_log.txt"):
+
+def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=0, ttf_file=None,
+                 log_path="replace_log.txt", instance_index=-1):
+    """
+    替换PDF中的文本
+    
+    参数:
+        input_pdf: 输入PDF路径
+        output_pdf: 输出PDF路径
+        target_text: 要替换的目标文本
+        replacement_text: 替换后的文本
+        page_num: 页码（从0开始）
+        ttf_file: TTF字体文件路径（已废弃）
+        log_path: 日志文件路径
+        instance_index: 要替换的文本实例索引，-1表示替换所有实例
+    """
     if target_text == replacement_text:
         print(f"⚠️ 替换文本与原文本相同，跳过处理")
         return
@@ -622,7 +604,7 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
     log.append("📚 使用当前PDF字体映射")
     print("📚 使用当前PDF字体映射")
     pdf = pikepdf.open(input_pdf)
-    
+
     # 检查页码是否有效
     if page_num < 0 or page_num >= len(pdf.pages):
         error_msg = f"❌ 无效的页码: {page_num}，PDF共有 {len(pdf.pages)} 页"
@@ -631,27 +613,30 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
         with open(os.path.join(output_dir, os.path.basename(log_path)), "w", encoding="utf-8") as f:
             f.write('\n'.join(log))
         return
-    
+
     # 收集整个PDF中所有字体的所有字符
     all_pdf_chars = {}  # 字体名 -> 字符集合
     all_char_codes = {}  # 字体名 -> {字符 -> 编码集合}
     for page_idx, page in enumerate(pdf.pages):
         if "/Resources" not in page or "/Font" not in page["/Resources"]:
             continue
-            
+
         font_dict = page["/Resources"]["/Font"]
-        for font_name in [str(name) for name in font_dict if str(name).startswith("/TT")]:
+        tt_names_page = get_truetype_font_names(font_dict)
+        if not tt_names_page:
+            tt_names_page = [str(name) for name in font_dict.keys()]
+        for font_name in tt_names_page:
             if font_name not in all_pdf_chars:
                 all_pdf_chars[font_name] = set()
                 all_char_codes[font_name] = {}
-                
+
             font_ref = font_dict[pikepdf.Name(font_name)]
-            
+
             # 检查是否需要添加ToUnicode CMap
             if "/ToUnicode" not in font_ref:
                 log.append(f"⚠️ 字体 {font_name} 缺少ToUnicode CMap，添加默认映射")
                 print(f"⚠️ 字体 {font_name} 缺少ToUnicode CMap，添加默认映射")
-                
+
                 # 获取字体编码
                 encoding_name = '/WinAnsiEncoding'  # 默认
                 if "/Encoding" in font_ref:
@@ -660,21 +645,21 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                         encoding_name = str(encoding)
                     elif isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" in encoding:
                         encoding_name = str(encoding["/BaseEncoding"])
-                
+
                 # 创建并添加ToUnicode CMap
                 cmap_str = create_tounicode_cmap(font_ref, encoding_name)
                 font_ref["/ToUnicode"] = pikepdf.Stream(pdf, cmap_str.encode())
-                
+
                 # 重新提取CMap
                 cmap_bytes = font_ref["/ToUnicode"].read_bytes()
                 cmap_str = cmap_bytes.decode("utf-8", errors="ignore")
                 font_cmap = parse_cmap(cmap_str)
-                
+
                 # 添加到映射字典
                 if font_name not in font_cmaps:
                     font_cmaps[font_name] = {}
                 font_cmaps[font_name].update(font_cmap)
-                
+
                 log.append(f"✅ 为字体 {font_name} 添加了 {len(font_cmap)} 个映射")
                 print(f"✅ 为字体 {font_name} 添加了 {len(font_cmap)} 个映射")
             elif font_name not in font_cmaps:
@@ -683,39 +668,42 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                 cmap_str = cmap_bytes.decode("utf-8", errors="ignore")
                 font_cmap = parse_cmap(cmap_str)
                 font_cmaps[font_name] = font_cmap
-            
+
             # 获取页面内容
             content_objects = page['/Contents']
-            combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects, pikepdf.Array) else content_objects.read_bytes()
+            combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects,
+                                                                                           pikepdf.Array) else content_objects.read_bytes()
             content_raw = combined.decode("latin1")
-            
+
             # 找到所有文本
             text_pattern = re.compile(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]')
             font_pattern = re.compile(r'/([A-Za-z0-9]+)\s+\d+\s+Tf')
             current_font = None
-            
+
             # 遍历找到使用此字体的所有文本
-            for match in re.finditer(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf', content_raw):
+            for match in re.finditer(
+                    r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf',
+                    content_raw):
                 font_match = font_pattern.search(match.group(0))
                 if font_match:
                     current_font = '/' + font_match.group(1)
                     continue
-                    
+
                 if current_font != font_name:
                     continue
-                    
+
                 text_match = text_pattern.search(match.group(0))
                 if text_match:
                     is_tj = match.group(0).strip().endswith('TJ')
                     inner_text = text_match.group(2) if is_tj else text_match.group(1)
                     text_content_for_decode = inner_text.replace('\\', '')
                     encoded_bytes = text_content_for_decode.encode("latin1")
-                    
+
                     try:
                         decoded_text = decode_pdf_string(encoded_bytes, font_cmaps[font_name])
                         # 将所有字符添加到集合
                         all_pdf_chars[font_name].update(decoded_text)
-                        
+
                         # 记录每个字符对应的编码
                         for i, char in enumerate(decoded_text):
                             if char not in all_char_codes[font_name]:
@@ -723,22 +711,24 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                             # 记录字符的原始字节编码
                             all_char_codes[font_name][char].add(encoded_bytes[i])
                     except:
-                        print(f"⚠️ 第{page_idx+1}页某段文本解码失败，已跳过")
-    
+                        print(f"⚠️ 第{page_idx + 1}页某段文本解码失败，已跳过")
+
     # 记录每个字体已使用的所有编码
     all_used_codes = {}  # 字体名 -> 编码集合
     for font_name in all_char_codes:
         all_used_codes[font_name] = set()
         for char, codes in all_char_codes[font_name].items():
             all_used_codes[font_name].update(codes)
-        log.append(f"📊 字体 {font_name} 已使用的编码: {', '.join(hex(code)[2:].upper() for code in sorted(all_used_codes[font_name]))}")
-        print(f"📊 字体 {font_name} 已使用的编码: {', '.join(hex(code)[2:].upper() for code in sorted(all_used_codes[font_name]))}")
-    
+        log.append(
+            f"📊 字体 {font_name} 已使用的编码: {', '.join(hex(code)[2:].upper() for code in sorted(all_used_codes[font_name]))}")
+        print(
+            f"📊 字体 {font_name} 已使用的编码: {', '.join(hex(code)[2:].upper() for code in sorted(all_used_codes[font_name]))}")
+
     # 使用指定页码
     page = pdf.pages[page_num]
     log.append(f"📄 处理第 {page_num + 1} 页")
     print(f"📄 处理第 {page_num + 1} 页")
-    
+
     if "/Resources" not in page or "/Font" not in page["/Resources"]:
         error_msg = f"❌ 第 {page_num + 1} 页没有字体资源"
         log.append(error_msg)
@@ -746,26 +736,18 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
         with open(os.path.join(output_dir, os.path.basename(log_path)), "w", encoding="utf-8") as f:
             f.write('\n'.join(log))
         return
-        
+
     font_dict = page["/Resources"]["/Font"]
-    # 修改字体名称匹配模式，匹配所有TT字体
-    font_names = [str(name) for name in font_dict if str(name).startswith("/TT")]
-    
-    if not font_names:
-        error_msg = f"❌ 第 {page_num + 1} 页没有TrueType字体"
-        log.append(error_msg)
-        print(error_msg)
-        with open(os.path.join(output_dir, os.path.basename(log_path)), "w", encoding="utf-8") as f:
-            f.write('\n'.join(log))
-        return
-    
-    # 检查当前页面的字体是否需要添加ToUnicode CMap
-    for font_name in font_names:
+    # 优先选择 TrueType 字体；若页面没有 TrueType，则回退到全部字体以保证基本替换功能
+    tt_names = get_truetype_font_names(font_dict)
+    if not tt_names:
+        tt_names = [str(name) for name in font_dict.keys()]
+    for font_name in tt_names:
         font_ref = font_dict[pikepdf.Name(font_name)]
         if "/ToUnicode" not in font_ref:
             log.append(f"⚠️ 第 {page_num + 1} 页字体 {font_name} 缺少ToUnicode CMap，添加默认映射")
             print(f"⚠️ 第 {page_num + 1} 页字体 {font_name} 缺少ToUnicode CMap，添加默认映射")
-            
+
             # 获取字体编码
             encoding_name = '/WinAnsiEncoding'  # 默认
             if "/Encoding" in font_ref:
@@ -774,27 +756,27 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                     encoding_name = str(encoding)
                 elif isinstance(encoding, pikepdf.Dictionary) and "/BaseEncoding" in encoding:
                     encoding_name = str(encoding["/BaseEncoding"])
-            
+
             # 创建并添加ToUnicode CMap
             cmap_str = create_tounicode_cmap(font_ref, encoding_name)
             font_ref["/ToUnicode"] = pikepdf.Stream(pdf, cmap_str.encode())
-            
+
             # 重新提取CMap
             cmap_bytes = font_ref["/ToUnicode"].read_bytes()
             cmap_str = cmap_bytes.decode("utf-8", errors="ignore")
             font_cmap = parse_cmap(cmap_str)
-            
+
             # 添加到映射字典
             if font_name not in font_cmaps:
                 font_cmaps[font_name] = {}
             font_cmaps[font_name].update(font_cmap)
-            
+
             log.append(f"✅ 为字体 {font_name} 添加了 {len(font_cmap)} 个映射")
             print(f"✅ 为字体 {font_name} 添加了 {len(font_cmap)} 个映射")
 
     # 为所有TT字体创建编码映射
     font_encoding_maps = {}
-    for font_name in font_names:
+    for font_name in tt_names:
         font_ref = font_dict[pikepdf.Name(font_name)]
         font_encoding_maps[font_name] = get_font_encoding_mapping(font_ref)
         log.append(f"\n📊 字体 {font_name} 编码映射表:")
@@ -803,39 +785,30 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
             log.append(f"  {code:02X} -> {glyph}")
             print(f"  {code:02X} -> {glyph}")
 
-    if ttf_file:
-        for font_name in font_names:
-            target_font_path = os.path.join(output_dir, font_name.replace("/", "") + ".ttf")
-            try:
-                shutil.copy2(ttf_file, target_font_path)
-                log.append(f"📦 已复制TTF文件 {ttf_file} 到 {target_font_path}")
-                print(f"📦 已复制TTF文件 {ttf_file} 到 {target_font_path}")
-            except Exception as e:
-                log.append(f"❌ 复制TTF失败: {e}")
-                print(f"❌ 复制TTF失败: {e}")
-
     # 收集所有使用该字体的文本
     all_texts = []
     content_objects = page['/Contents']
-    combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects, pikepdf.Array) else content_objects.read_bytes()
+    combined = b''.join(obj.read_bytes() for obj in content_objects) if isinstance(content_objects,
+                                                                                   pikepdf.Array) else content_objects.read_bytes()
     content_raw = combined.decode("latin1")
     text_pattern = re.compile(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]')
     font_pattern = re.compile(r'/([A-Za-z0-9]+)\s+\d+\s+Tf')
-    
+
     # 首先收集所有文本
     current_pos = 0
     current_font = None
-    for match in re.finditer(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf', content_raw):
+    for match in re.finditer(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf',
+                             content_raw):
         if match.start() > current_pos:
             current_pos = match.end()
             continue
-            
+
         font_match = font_pattern.search(match.group(0))
         if font_match:
             current_font = '/' + font_match.group(1)
             current_pos = match.end()
             continue
-            
+
         text_match = text_pattern.search(match.group(0))
         if text_match and current_font in font_cmaps:
             is_tj = match.group(0).strip().endswith('TJ')
@@ -851,18 +824,73 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
     modified_fonts = set()
     new_segments = []
     current_pos = 0
+    current_instance_index = 0  # 初始化当前实例索引计数器
     
-    for segment in re.finditer(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf|(?:[-\d.]+\s+){5}[-\d.]+\s+Tm', content_raw):
+    # 找出目标文本使用的字体
+    target_font = None
+    target_font_chars = set()
+    
+    # 添加实例选择的日志信息
+    if instance_index >= 0:
+        log.append(f"ℹ️ 仅替换第 {instance_index+1} 个实例")
+        print(f"ℹ️ 仅替换第 {instance_index+1} 个实例")
+    else:
+        log.append(f"ℹ️ 替换所有实例")
+        print(f"ℹ️ 替换所有实例")
+    
+    for font_name, texts, bytes_list, text_match, is_tj in all_texts:
+        if texts == target_text:
+            target_font = font_name
+            break
+    
+    # 如果找到目标字体，就只检查该字体内的字符
+    if target_font and target_font in all_pdf_chars:
+        target_font_chars = all_pdf_chars[target_font]
+        log.append(f"🔍 找到目标文本字体: {target_font}，该字体包含 {len(target_font_chars)} 个字符")
+        print(f"🔍 找到目标文本字体: {target_font}，该字体包含 {len(target_font_chars)} 个字符")
+    else:
+        # 如果找不到目标字体，则合并所有字体中的字符
+        log.append(f"⚠️ 无法确定目标文本使用的字体，将检查所有字体")
+        print(f"⚠️ 无法确定目标文本使用的字体，将检查所有字体")
+        for font_name, char_set in all_pdf_chars.items():
+            target_font_chars.update(char_set)
+    
+    unsupported_chars = []
+    for char in replacement_text:
+        if char not in target_font_chars and char not in " \t\n\r":  # 忽略空白字符
+            unsupported_chars.append(char)
+    
+    if unsupported_chars:
+        unsupported_str = ''.join(unsupported_chars)
+        log.append(f"⚠️ 替换文本包含当前字体中不存在的字符: '{unsupported_str}'，这些字符将被跳过")
+        print(f"⚠️ 替换文本包含当前字体中不存在的字符: '{unsupported_str}'，这些字符将被跳过")
+        
+        # 过滤掉不支持的字符，生成新的替换文本
+        filtered_text = ''.join([c for c in replacement_text if c in target_font_chars or c in " \t\n\r"])
+        if not filtered_text:
+            log.append(f"❌ 过滤后的替换文本为空，取消替换")
+            print(f"❌ 过滤后的替换文本为空，取消替换")
+            with open(os.path.join(output_dir, os.path.basename(log_path)), "w", encoding="utf-8") as f:
+                f.write('\n'.join(log))
+            return
+        
+        log.append(f"ℹ️ 已过滤不支持的字符，使用过滤后的文本: '{filtered_text}'")
+        print(f"ℹ️ 已过滤不支持的字符，使用过滤后的文本: '{filtered_text}'")
+        replacement_text = filtered_text
+
+    for segment in re.finditer(
+            r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]|/[A-Za-z0-9]+\s+\d+\s+Tf|(?:[-\d.]+\s+){5}[-\d.]+\s+Tm',
+            content_raw):
         if segment.start() > current_pos:
             new_segments.append(content_raw[current_pos:segment.start()])
-            
+
         font_match = font_pattern.search(segment.group(0))
         if font_match:
             current_font = '/' + font_match.group(1)
             new_segments.append(segment.group(0))
             current_pos = segment.end()
             continue
-            
+
         text_match = text_pattern.search(segment.group(0))
         if text_match and current_font in font_cmaps:
             is_tj = segment.group(0).strip().endswith('TJ')
@@ -870,8 +898,18 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
             text_content_for_decode = inner_text.replace('\\', '')
             encoded_bytes = text_content_for_decode.encode("latin1")
             decoded_text = decode_pdf_string(encoded_bytes, font_cmaps[current_font])
-            
+
             if decoded_text == target_text:
+                # 如果指定了实例索引，则跟踪当前实例
+                if instance_index >= 0:
+                    # 不是目标实例，跳过替换
+                    if current_instance_index != instance_index:
+                        current_instance_index += 1
+                        new_segments.append(segment.group(0))
+                        current_pos = segment.end()
+                        continue
+                    current_instance_index += 1
+                
                 log.append(f"🧾 ({current_font}) 替换: {decoded_text} → {replacement_text}")
                 print(f"🧾 ({current_font}) 替换: {decoded_text} → {replacement_text}")
 
@@ -904,10 +942,10 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                 char_to_code = {v: k[0] for k, v in existing_cmap.items()}
                 new_codes = []
                 allocated_chars = {}
-                
+
                 # 获取该字体已使用的所有编码
                 already_used_codes = all_used_codes.get(current_font, set())
-                
+
                 # 确保所有现有字符的映射保持不变
                 for char in replacement_text:
                     if char in all_char_codes.get(current_font, {}):
@@ -922,6 +960,20 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                         code = char_to_code[char]
                         allocated_chars[char] = code
                     else:
+                        # 如果在当前字体中找不到字符，则在其他字体中查找
+                        found_in_other_font = False
+                        for other_font, chars in all_pdf_chars.items():
+                            if char in chars and char in all_char_codes.get(other_font, {}):
+                                log.append(f"  ⚠️ 字符 '{char}' 在当前字体中不存在，但在字体 {other_font} 中存在")
+                                print(f"  ⚠️ 字符 '{char}' 在当前字体中不存在，但在字体 {other_font} 中存在")
+                                found_in_other_font = True
+                                break
+                        
+                        if not found_in_other_font:
+                            log.append(f"  ⚠️ 字符 '{char}' 在PDF中不存在，跳过此字符")
+                            print(f"  ⚠️ 字符 '{char}' 在PDF中不存在，跳过此字符")
+                            continue
+                            
                         # 从0xB0开始查找安全编码，提高起始位置避免与常用字符冲突
                         start_code = 0xB0
                         found = False
@@ -929,10 +981,10 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                         # 遍历所有可能的编码
                         for code_candidate in range(start_code, 0x100):
                             # 确保编码未被使用，且不在任何其他字符的编码集中
-                            if (code_candidate in used_codes or 
-                                code_candidate in already_used_codes):
+                            if (code_candidate in used_codes or
+                                    code_candidate in already_used_codes):
                                 continue
-                                
+
                             # 检查所有TT字体的编码映射
                             is_safe = True
                             for font_name, encoding_map in font_encoding_maps.items():
@@ -971,21 +1023,32 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                                 print(f"  ⚠️ 为字符 '{char}' 分配扩展编码: 0x{code:02X}")
                                 found = True
                                 break
-                            
+
                         if not found:
-                            raise RuntimeError(f"❌ 无法为字符 '{char}' 找到安全编码")
+                            log.append(f"  ❌ 无法为字符 '{char}' 找到安全编码，跳过此字符")
+                            print(f"  ❌ 无法为字符 '{char}' 找到安全编码，跳过此字符")
+                            continue
+                            
                     new_codes.append(code)
+
+                if not new_codes:
+                    log.append(f"❌ 所有替换字符都不可用，取消替换")
+                    print(f"❌ 所有替换字符都不可用，取消替换")
+                    new_segments.append(segment.group(0))
+                    current_pos = segment.end()
+                    continue
 
                 # 打印替换文本的字符流映射表
                 new_encoded = bytes(new_codes)
                 log.append("\n📊 替换文本字符流映射:")
                 print("\n📊 替换文本字符流映射:")
-                print_character_stream_mapping(replacement_text, new_encoded, font_cmaps[current_font], log)
+                print_character_stream_mapping(''.join([char for char in replacement_text if char in allocated_chars]), 
+                                              new_encoded, font_cmaps[current_font], log)
 
                 # 打印替换文本的渲染映射过程
                 log.append("\n📊 替换文本渲染映射过程:")
                 print("\n📊 替换文本渲染映射过程:")
-                for i, char in enumerate(replacement_text):
+                for i, char in enumerate(allocated_chars.keys()):
                     print_rendering_mapping(font_ref, char, new_encoded[i], log)
 
                 # 增强日志：记录新编码
@@ -1036,7 +1099,7 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
             import shutil
             shutil.copy2(input_pdf, updated_pdf_path)
             updated_pdf = pikepdf.open(updated_pdf_path)
-            
+
         # 更新内容流
         page = updated_pdf.pages[page_num]
         page['/Contents'] = pikepdf.Stream(updated_pdf, content_raw.encode("latin1"))
@@ -1051,6 +1114,7 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
     with open(log_path_out, "w", encoding="utf-8") as f:
         f.write('\n'.join(log))
     print(f"📘 日志写入: {log_path_out}")
+
 
 def create_tounicode_cmap(font_ref, encoding_name='/WinAnsiEncoding'):
     """
@@ -1074,14 +1138,14 @@ def create_tounicode_cmap(font_ref, encoding_name='/WinAnsiEncoding'):
             120: 'x', 121: 'y', 122: 'z', 123: '{', 124: '|', 125: '}', 126: '~'
         }
     }
-    
+
     # Use the appropriate encoding
     if encoding_name in standard_encodings:
         encoding = standard_encodings[encoding_name]
     else:
         # Default to WinAnsi if encoding not recognized
         encoding = standard_encodings['/WinAnsiEncoding']
-    
+
     # Create ToUnicode CMap
     cmap_str = "/CIDInit /ProcSet findresource begin\n"
     cmap_str += "12 dict begin\n"
@@ -1090,27 +1154,56 @@ def create_tounicode_cmap(font_ref, encoding_name='/WinAnsiEncoding'):
     cmap_str += "/CMapName /Adobe-Identity-UCS def\n"
     cmap_str += "/CMapType 2 def\n"
     cmap_str += "1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
-    
+
     # Create bfchar entries
     bfchar_entries = []
     for code, char in encoding.items():
         if 0 <= code <= 255:  # Ensure code is in valid range
             bfchar_entries.append(f"<{code:02X}> <{ord(char):04X}>")
-    
+
     # Write bfchar
     cmap_str += f"{len(bfchar_entries)} beginbfchar\n"
     for entry in bfchar_entries:
         cmap_str += entry + "\n"
     cmap_str += "endbfchar\nendcmap\n"
     cmap_str += "CMapName currentdict /CMap defineresource pop\nend\nend"
-    
+
     return cmap_str
 
-replace_text(
-    input_pdf="./inputs/m2.pdf",
-    output_pdf="output.pdf",
-    target_text="MADE IN THAILAND",
-    replacement_text="1234567890zx ",
-    page_num=0,  # 页码从0开始，0表示第一页
-    ttf_file=""
-)
+
+# Example usage removed
+
+
+# ================== 新增辅助函数 ==================
+# 根据字体字典提取 TrueType 字体名称。
+# 规则：
+#   1. /Subtype 必须等于 /TrueType；
+#   2. 兼容旧逻辑，名字以 /TT 开头也认为是 TrueType。
+# 这样可以避免仅凭名字前缀过滤导致找不到字体的问题。
+
+def get_truetype_font_names(font_dict):
+    """从 /Font 字典中过滤并返回 TrueType 字体名称列表"""
+    names = set()
+    for name_obj, font_ref in font_dict.items():
+        try:
+            if "/Subtype" in font_ref and str(font_ref["/Subtype"]) == "/TrueType":
+                names.add(str(name_obj))
+                continue
+        except Exception:
+            # 有些对象可能不是典型的字典，安全忽略
+            pass
+
+        # 如果 FontDescriptor 中嵌入了 FontFile2，也视为 TrueType
+        try:
+            if "/FontDescriptor" in font_ref and "/FontFile2" in font_ref["/FontDescriptor"]:
+                names.add(str(name_obj))
+                continue
+        except Exception:
+            pass
+
+        # 兼容旧逻辑：名字以 /TT 开头
+        if str(name_obj).startswith("/TT"):
+            names.add(str(name_obj))
+
+    return list(names)
+

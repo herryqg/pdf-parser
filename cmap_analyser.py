@@ -8,3 +8,4 @@ for page in pdf.pages:
             cmap = font["/ToUnicode"].read_bytes().decode("utf-8", errors="ignore")
             print(f"=== CMap for {font_name} ===")
             print(cmap)
+
