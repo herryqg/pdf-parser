@@ -7,7 +7,10 @@ from PIL import Image, ImageTk
 import tempfile
 import io
 import fitz  # PyMuPDF
+import pandas as pd
 from praser import replace_text, create_tounicode_cmap, parse_cmap, decode_pdf_string
+import uuid
+import shutil
 
 class PDFReplacerApp:
     def __init__(self, root):
@@ -86,7 +89,8 @@ class PDFReplacerApp:
         ttk.Entry(self.control_frame, textvariable=self.replace_text_var, width=30).grid(row=4, column=1, columnspan=3, padx=5, pady=5)
         
         ttk.Button(self.control_frame, text="Replace", command=self.execute_replacement).grid(row=5, column=2, padx=5, pady=10)
-        ttk.Button(self.control_frame, text="save as", command=self.save_pdf).grid(row=5, column=3, columnspan=2, padx=5, pady=10)
+        ttk.Button(self.control_frame, text="save as", command=self.save_pdf).grid(row=5, column=3, padx=5, pady=10)
+        ttk.Button(self.control_frame, text="批量替换", command=self.batch_replace).grid(row=5, column=4, padx=5, pady=10)
 
         ttk.Button(self.control_frame, text="+", command=self.zoom_in).grid(row=5, column=0, padx=5, pady=10)
         ttk.Button(self.control_frame, text="-", command=self.zoom_out).grid(row=5, column=1, padx=5, pady=10)
@@ -1069,11 +1073,14 @@ class PDFReplacerApp:
         """在新线程中执行替换"""
         try:
             # 检查替换文本中是否包含原始PDF中不存在的字符
-            unsupported_chars = self.check_unsupported_chars(replacement_text)
+            unsupported_chars = self.check_unsupported_chars(replacement_text, target_text)
             if unsupported_chars:
-                # 如果有不支持的字符，显示警告并询问是否继续
+                # 弹窗确认是否继续
                 unsupported_chars_str = ''.join(unsupported_chars)
-                msg = f"替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'\n这些字符将被跳过或可能显示为占位符。是否继续？"
+                msg = (
+                    f"替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'\n"
+                    f"这些字符将被跳过或可能显示为占位符。是否继续？"
+                )
                 if not messagebox.askyesno("警告", msg):
                     self.log("替换已取消")
                     self.root.after(0, lambda: self.status_var.set("替换已取消"))
@@ -1081,15 +1088,20 @@ class PDFReplacerApp:
 
                 self.log(f"⚠️ 替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'")
 
+            # 计算实际写入PDF的替换文本（去除不支持字符）
+            filtered_replacement_text = replacement_text
+            if unsupported_chars:
+                filtered_replacement_text = ''.join([c for c in replacement_text if c not in unsupported_chars])
+
             # 调用替换函数
-            self.log(f"执行替换: '{target_text}' -> '{replacement_text}'")
+            self.log(f"执行替换: '{target_text}' -> '{filtered_replacement_text}'")
             self.log(f"在第 {self.current_page_num + 1} 页")
 
             replace_text(
                 input_pdf=self.current_pdf,
                 output_pdf=output_pdf,
                 target_text=target_text,
-                replacement_text=replacement_text,
+                replacement_text=filtered_replacement_text,
                 page_num=self.current_page_num,
                 ttf_file=None,
                 instance_index=instance_index  # 传递实例索引
@@ -1098,6 +1110,27 @@ class PDFReplacerApp:
             # 检查文件是否创建成功
             if os.path.exists(output_pdf):
                 self.log(f"替换成功，文件保存为: {output_pdf}")
+
+                # 若存在不支持字符，则在输出 PDF 中进行标记
+                if unsupported_chars:
+                    try:
+                        # 若有选中实例，取其矩形
+                        selected_rect = None
+                        if self.selected_text_instance is not None:
+                            selected_rect = self.selected_text_instance[1]
+
+                        self.mark_unsupported_characters(
+                            pdf_path=output_pdf,
+                            page_index=self.current_page_num,
+                            unsupported_chars=unsupported_chars,
+                            replacement_text=filtered_replacement_text,
+                            target_text=target_text,
+                            instance_rect=selected_rect
+                        )
+                        self.log("已在 PDF 中标记不支持字符的位置")
+                    except Exception as e:
+                        self.log(f"标记不支持字符时出错: {e}")
+
                 self.root.after(0, lambda: self.status_var.set(f"替换成功，文件保存为: {os.path.basename(output_pdf)}"))
 
                 # 询问是否打开新文件
@@ -1107,6 +1140,12 @@ class PDFReplacerApp:
                 self.log("替换失败")
                 self.root.after(0, lambda: self.status_var.set("替换失败"))
 
+            # 读取替换日志中的警告信息并提示
+            try:
+                self._show_replace_warnings()
+            except Exception:
+                pass
+
         except Exception as e:
             err_msg = str(e)
             self.log(f"替换错误: {err_msg}")
@@ -1114,8 +1153,20 @@ class PDFReplacerApp:
             self.root.after(0, lambda m=err_msg: self.status_var.set("替换错误: " + m))
             self.root.after(0, lambda m=err_msg: messagebox.showerror("错误", f"替换过程中发生错误: {m}"))
 
-    def check_unsupported_chars(self, text):
-        """检查文本中是否包含当前字体中不存在的字符"""
+    def check_unsupported_chars(self, text, target_text=None):
+        """检查文本中是否包含当前字体中不存在的字符
+
+        Args:
+            text (str): 待检查的替换文本
+            target_text (str, optional): 原始目标文本，用于定位字体；若为空则回退到界面输入框
+        """
+        if target_text is None:
+            # 若批量流程未设置 find_text_var，则使用传入值
+            try:
+                target_text = self.find_text_var.get()
+            except Exception:
+                target_text = ""
+
         if not self.pdf_document or not text:
             return []
 
@@ -1127,6 +1178,7 @@ class PDFReplacerApp:
         font_chars = {}  # 字体名称 -> 该字体包含的字符集
 
         # 从当前页面的文本块中收集每个字体包含的字符
+
         for block in blocks:
             if "lines" in block:
                 for line in block["lines"]:
@@ -1147,7 +1199,6 @@ class PDFReplacerApp:
             return unsupported
 
         # 获取要替换的文本所使用的字体
-        target_text = self.find_text_var.get()
         target_font = None
 
         for block in blocks:
@@ -1186,9 +1237,6 @@ class PDFReplacerApp:
 
     def save_pdf(self):
         """保存修改后的PDF（提示用户先执行替换）"""
-        import shutil
-        import tkinter as tk
-        from tkinter import messagebox, filedialog
         if not os.path.exists("output") or not any(f.endswith('.pdf') for f in os.listdir("output")):
             messagebox.showinfo("提示", "请先执行替换操作")
             return
@@ -1400,6 +1448,290 @@ class PDFReplacerApp:
                 return p.obj[key]
             p = p.obj.get('/Parent', None)
         return None
+
+    def mark_unsupported_characters(self, pdf_path, page_index, unsupported_chars, replacement_text=None, target_text=None, instance_rect=None, target_font=None):
+        """在指定页面标记不支持字符或替换文本位置。
+
+        若页面中找不到不支持字符，则尝试标记替换文本的位置；如果仍未找到，则退回到原始目标文本。
+
+        Args:
+            pdf_path (str): PDF 路径
+            page_index (int): 页码索引（0 基）
+            unsupported_chars (List[str]): 不支持字符列表
+            replacement_text (str, optional): 替换后的文本
+            target_text (str, optional): 原始待替换文本
+            instance_rect (fitz.Rect, optional): 选中实例的矩形
+        """
+        if not unsupported_chars:
+            return
+
+        import fitz
+
+        try:
+            doc = fitz.open(pdf_path)
+            if page_index < 0 or page_index >= len(doc):
+                doc.close()
+                return
+
+            page = doc[page_index]
+
+            # 注释内容
+            note_content = f"Unsupported chars: {''.join(unsupported_chars)}"
+
+            def add_annots(rects):
+                if not rects:
+                    return
+                self.log(f"📍 标记 {len(rects)} 处可能含不支持字符的位置")
+                for rect in rects:
+                    try:
+                        # 使用矩形批注 + 高亮，使读者更易察觉
+                        annot = page.add_rect_annot(rect)
+                        annot.set_colors(stroke=(1, 0, 0), fill=(1, 0, 0))  # 红边+淡红填充
+                        annot.set_opacity(0.15)
+                        annot.set_border(width=2)
+                        annot.set_info({"title": "PDF-praser", "content": note_content})
+                        annot.update()
+                    except Exception as ee:
+                        # 若矩形批注失败则退回高亮
+                        try:
+                            quad = [rect.x0, rect.y1, rect.x1, rect.y1, rect.x0, rect.y0, rect.x1, rect.y0]
+                            annot = page.add_highlight_annot(quad)
+                            annot.set_colors(stroke=(1, 0, 0))
+                            annot.set_opacity(0.3)
+                            annot.update()
+                        except Exception:
+                            pass
+
+            found_any = False
+
+            # 0) 若传入显式矩形，则直接标注
+            if instance_rect is not None:
+                if isinstance(instance_rect, (list, tuple)):
+                    add_annots(instance_rect)
+                else:
+                    add_annots([instance_rect])
+                found_any = True
+
+            # 1) 优先查找替换后的整段文本，避免过度标记
+            if not found_any and replacement_text:
+                rects = page.search_for(replacement_text, flags=0)
+                if rects:
+                    add_annots(rects)
+                    found_any = True
+
+            # 2) 若未找到，则回退到原始目标文本
+            if not found_any and target_text:
+                rects = page.search_for(target_text, flags=0)
+                if rects:
+                    add_annots(rects)
+                    found_any = True
+
+            # 3) 最后才逐字符查找不支持字符，这一步可能产生较多匹配，因此放在末尾并加以限制
+            if not found_any:
+                for ch in unsupported_chars:
+                    if ch.isspace():
+                        continue
+                    rects = page.search_for(ch, flags=0)
+                    if rects:
+                        add_annots(rects)
+                        found_any = True
+
+            # 4) 若仍未找到，尝试在文本块中精准匹配
+            if not found_any:
+                try:
+                    text_dict = page.get_text("dict")
+                    candidate_rects = []
+                    for block in text_dict.get("blocks", []):
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                span_text = span.get("text", "")
+                                span_font = span.get("font", "")
+                                if target_font and span_font != target_font:
+                                    continue
+                                if any(ch in span_text for ch in unsupported_chars):
+                                    rect = fitz.Rect(span["bbox"])
+                                    candidate_rects.append(rect)
+                                elif replacement_text and replacement_text in span_text:
+                                    rect = fitz.Rect(span["bbox"])
+                                    candidate_rects.append(rect)
+                                elif target_text and target_text in span_text:
+                                    rect = fitz.Rect(span["bbox"])
+                                    candidate_rects.append(rect)
+                    if candidate_rects:
+                        add_annots(candidate_rects)
+                        found_any = True
+                except Exception:
+                    pass
+
+            if found_any:
+                doc.save(pdf_path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            doc.close()
+        except Exception as e:
+            raise e
+
+    # ---------------- 批量替换 ----------------
+    def batch_replace(self):
+        """从 Excel 表批量生成多个 PDF"""
+        if not self.pdf_document:
+            messagebox.showinfo("提示", "请先打开模板 PDF 文件")
+            return
+
+        excel_path = filedialog.askopenfilename(
+            title="选择 Excel 文件",
+            filetypes=[("Excel 文件", "*.xlsx *.xls"), ("所有文件", "*.*")]
+        )
+        if not excel_path:
+            return
+
+        # 在新线程中执行耗时任务
+        self.status_var.set("批量替换进行中...")
+        threading.Thread(target=self._batch_replace_thread, args=(excel_path,)).start()
+
+    def _batch_replace_thread(self, excel_path):
+        try:
+            self.log(f"读取 Excel: {excel_path}")
+            df = pd.read_excel(excel_path, header=None)
+            if df.shape[1] < 2:
+                self.log("Excel 至少需要两列：第一列模板文本，其余列为替换文本")
+                return
+
+            # 第一列是模板文本
+            template_texts = df.iloc[:, 0].astype(str).tolist()
+
+            template_pdf = self.current_pdf
+            if not template_pdf:
+                self.log("未找到当前 PDF")
+                return
+
+            output_dir = "output"
+            os.makedirs(output_dir, exist_ok=True)
+
+            base_name = os.path.splitext(os.path.basename(template_pdf))[0]
+
+            for col_idx in range(1, df.shape[1]):
+                replacement_texts = df.iloc[:, col_idx].astype(str).tolist()
+                # 生成输出文件名，取该列第一行非空内容作为标识
+                col_tag = replacement_texts[0] if replacement_texts[0] else f"col{col_idx}"
+                safe_tag = ''.join(ch for ch in col_tag if ch.isalnum() or ch in ('_', '-'))
+                output_pdf = os.path.join(output_dir, f"{base_name}_{safe_tag}.pdf")
+
+                # 先复制模板作为起始文件
+                shutil.copy2(template_pdf, output_pdf)
+
+                current_pdf_path = output_pdf
+
+                self.log(f"\n▶ 开始生成: {output_pdf}")
+
+                # 逐条替换
+                for idx, (target_text, repl_text) in enumerate(zip(template_texts, replacement_texts)):
+                    if not target_text or not repl_text:
+                        continue
+                    # 每次替换写到唯一临时文件再覆盖
+                    tmp_path = os.path.join(output_dir, f"_tmp_{uuid.uuid4().hex}.pdf")
+                    try:
+                        # 检查替换文本是否包含未映射字符
+                        unsupported_chars = self.check_unsupported_chars(str(repl_text), target_text=str(target_text))
+                        replace_text(
+                            input_pdf=current_pdf_path,
+                            output_pdf=tmp_path,
+                            target_text=str(target_text),
+                            replacement_text=str(repl_text),
+                            page_num=0,
+                            ttf_file=None,
+                            instance_index=-1
+                        )
+                        # 替换完成后覆盖当前文件（仅当生成文件存在）
+                        if os.path.exists(tmp_path):
+                            shutil.move(tmp_path, current_pdf_path)
+                            self.log(f"   • 替换 {target_text} → {repl_text}")
+
+                            # 如果存在不支持字符，进行标记
+                            if unsupported_chars:
+                                try:
+                                    # 获取目标字体名称
+                                    try:
+                                        fitz_doc = fitz.open(current_pdf_path)
+                                        p0 = fitz_doc[0]
+                                        target_font_name = self.get_font_for_text(p0, str(target_text))
+                                        fitz_doc.close()
+                                    except Exception:
+                                        target_font_name = None
+                                    # 在替换前获取目标文本在页面中的矩形位置
+                                    try:
+                                        doc_before = fitz.open(current_pdf_path)
+                                        page_before = doc_before[0]
+                                        target_rects = page_before.search_for(str(target_text), flags=0)
+                                        doc_before.close()
+                                    except Exception:
+                                        target_rects = []
+                                    self.mark_unsupported_characters(
+                                        pdf_path=current_pdf_path,
+                                        page_index=0,
+                                        unsupported_chars=unsupported_chars,
+                                        replacement_text=str(repl_text),
+                                        target_text=str(target_text),
+                                        instance_rect=target_rects,
+                                        target_font=target_font_name
+                                    )
+                                except Exception as me:
+                                    self.log(f"   ⚠️ 标记不支持字符失败: {me}")
+                        else:
+                            self.log(f"⚠️ 未生成输出文件，可能未找到目标文本 '{target_text}'，已跳过此替换")
+                    except Exception as e:
+                        self.log(f"⚠️ 执行替换时出错 ({target_text}): {e}")
+                        # 清理 tmp
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+
+                self.log(f"✅ 生成完成: {output_pdf}")
+
+            self.root.after(0, lambda: self.status_var.set("批量替换完成"))
+
+        except Exception as e:
+            err = str(e)
+            self.log(f"批量替换错误: {err}")
+            self.root.after(0, lambda: self.status_var.set("批量替换错误"))
+
+    def get_font_for_text(self, page, search_text):
+        """返回页面中包含 search_text 的第一处 span 的字体名，如找不到则返回 None"""
+        try:
+            text_dict = page.get_text("dict")
+            for block in text_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        if search_text in span.get("text", ""):
+                            return span.get("font")
+        except Exception:
+            pass
+        return None
+
+    def _show_replace_warnings(self):
+        """读取最新 output/replace_log.txt，若包含关键警告则弹窗提示"""
+        log_path = os.path.join("output", "replace_log.txt")
+        if not os.path.exists(log_path):
+            return
+        warnings = []
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                keywords = [
+                    "替换文本包含当前字体中不存在的字符",
+                    "已过滤不支持的字符",
+                    "无法确定目标文本使用的字体",
+                    "替换所有实例",
+                    "🧾",
+                ]
+                for line in f.readlines():
+                    txt = line.strip()
+                    if any(kw in txt for kw in keywords):
+                        warnings.append(txt)
+        except Exception:
+            return
+        if warnings:
+            def _popup(msg):
+                messagebox.showinfo("替换警告", msg)
+            self.root.after(0, _popup, "\n".join(warnings))
 
 
 if __name__ == "__main__":
