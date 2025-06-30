@@ -1,0 +1,163 @@
+# PDF Parser and Text Replacement Tool
+
+A powerful Python library for parsing and modifying text content in PDF files with precise character-level control. This tool allows you to replace text in PDF documents while preserving the original formatting and layout.
+
+## Features
+
+- **Precise Text Replacement**: Replace specific text instances in PDF documents
+- **Font-Aware Processing**: Handles complex font encoding and character mappings
+- **Multi-instance Support**: Replace single or all instances of target text
+- **Character Validation**: Verifies replacement text compatibility with document fonts
+- **Font Analysis**: Analyze and debug font mappings in PDF documents
+- **Flexible API**: Both functional and class-based interfaces for integration
+- **GUI Interface**: Optional graphical interface for interactive text replacement
+
+## Installation
+
+```bash
+# From local source
+pip install -e .
+
+# From GitHub
+pip install git+https://github.com/your-username/pdf-parser.git
+
+# Dependencies
+pip install pikepdf fonttools PyMuPDF
+```
+
+## Requirements
+
+- Python 3.7+
+- pikepdf (PDF manipulation)
+- fonttools (Font analysis and manipulation)
+- PyMuPDF (fitz, PDF content extraction)
+
+## Usage
+
+### Command-line Usage
+
+```bash
+# Basic text replacement
+python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text"
+
+# Replace text on a specific page (0-based index)
+python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --page 2
+
+# Replace a specific instance of text (0-based index)
+python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --instance 1
+
+# Control verbosity level (0-3)
+python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --verbose 2
+
+# Allow automatic insertion of characters not in the font
+python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --allow-auto-insert
+```
+
+### Python API
+
+```python
+# Method 1: Using the function directly
+from pdf_parser.api import replace_pdf_text
+
+success = replace_pdf_text(
+    input_pdf="input.pdf",
+    output_pdf="output.pdf",
+    target_text="Original text",
+    replacement_text="New text",
+    page_num=0,  # 0-based page index
+    instance_index=-1,  # -1 for all instances, or specific index (0-based)
+    allow_auto_insert=False,  # Whether to allow inserting characters not in the font
+    verbose=1  # Verbosity level (0-3)
+)
+
+# Method 2: Using the class-based API
+from pdf_parser.api import PDFTextReplacer
+
+# Create an instance of the replacer
+replacer = PDFTextReplacer(debug=False, verbose=1)
+
+# Replace text
+success = replacer.replace_text(
+    input_pdf="input.pdf",
+    output_pdf="output.pdf",
+    target_text="Original text",
+    replacement_text="New text",
+    page_num=0,
+    instance_index=-1
+)
+
+# Analyze font mappings
+replacer.analyze_fonts("input.pdf", "font_analysis.txt")
+
+# Get font CMaps directly
+font_cmaps = replacer.get_font_cmaps("input.pdf")
+```
+
+## How It Works
+
+The PDF Parser processes documents in several steps:
+
+1. **Font Analysis**: Extracts and analyzes font encodings and CMaps from the PDF
+2. **Text Search**: Locates the target text in the PDF content stream using pattern matching
+3. **Character Validation**: Verifies that all characters in the replacement text are available in the document's fonts
+4. **Encoding**: Properly encodes the replacement text using the document's font encoding
+5. **Content Update**: Modifies the PDF content stream with the new encoded text
+
+## Project Structure
+
+```
+pdf-parser/
+├── pdf_parser/                # Main package
+│   ├── __init__.py            # Package initialization
+│   ├── api.py                 # Public API interface
+│   ├── example.py             # Command-line example script
+│   ├── core/                  # Core functionality
+│   │   ├── __init__.py
+│   │   ├── cmap.py            # CMap parsing and manipulation
+│   │   └── replacer.py        # Text replacement engine
+│   ├── fonts/                 # Font handling
+│   │   └── ...
+│   └── utils/                 # Utility functions
+│       └── ...
+├── pdf_gui.py                 # Optional GUI interface
+├── setup.py                   # Package installation configuration
+└── README.md                  # Documentation
+```
+
+## Character Validation
+
+By default, the tool validates that all characters in the replacement text are available in the PDF's fonts:
+
+- If a character is missing from the font, the replacement process will be canceled
+- All missing characters will be reported in the log
+- With `allow_auto_insert=True`, the tool can attempt to add missing characters to the font
+
+## Logging and Verbosity
+
+The tool supports different verbosity levels:
+
+- **Level 0**: Errors only
+- **Level 1**: Standard output (errors, warnings, basic info)
+- **Level 2**: Detailed output (includes data about fonts and character mappings)
+- **Level 3**: Debug output (comprehensive processing information)
+
+## Limitations
+
+- Only supports replacing text where the font has a ToUnicode CMap or can be mapped
+- Characters in the replacement text must be available in the PDF's fonts (unless auto-insert is enabled)
+- Cannot change text layout or formatting, only the content
+- Not suitable for scanned PDFs or text stored as images
+- PDF structure must conform to standard specifications
+
+## Troubleshooting
+
+If replacement fails:
+
+1. Check if the target text exists exactly as specified (case-sensitive)
+2. Verify if the replacement text contains characters not available in the document's fonts
+3. Increase verbosity level to get more detailed information
+4. Try with `--allow-auto-insert` if the issue is related to missing characters
+
+## License
+
+[MIT License](LICENSE) - Feel free to use, modify, and distribute as needed.

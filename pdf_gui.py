@@ -4,21 +4,22 @@ import os
 import threading
 import pikepdf
 from PIL import Image, ImageTk
-import tempfile
-import io
 import fitz  # PyMuPDF
 import pandas as pd
-from praser import replace_text, create_tounicode_cmap, parse_cmap, decode_pdf_string
 import uuid
 import shutil
+
+# Import from the new modular package
+from pdf_parser.api import replace_pdf_text
+from pdf_parser.core.cmap import parse_cmap, decode_pdf_string, create_tounicode_cmap
 
 class PDFReplacerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("PDF-praser")
+        self.root.title("PDF Parser and Text Replacement Tool")
         self.root.geometry("800x600")
         
-        # 当前打开的PDF
+
         self.current_pdf = None
         self.pdf_document = None
         self.current_page_num = 0
@@ -40,7 +41,7 @@ class PDFReplacerApp:
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 创建左侧控制面板
-        self.control_frame = ttk.LabelFrame(self.main_frame, text="edit")
+        self.control_frame = ttk.LabelFrame(self.main_frame, text="Edit")
         self.control_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=5, pady=5)
         
         # 创建PDF预览面板
@@ -68,7 +69,7 @@ class PDFReplacerApp:
         ttk.Label(self.control_frame, text="PDF:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.pdf_path_var = tk.StringVar()
         ttk.Entry(self.control_frame, textvariable=self.pdf_path_var, width=30).grid(row=0, column=1, columnspan=2, padx=5, pady=5)
-        ttk.Button(self.control_frame, text="浏览...", command=self.browse_pdf).grid(row=0, column=3, padx=5, pady=5)
+        ttk.Button(self.control_frame, text="Browse...", command=self.browse_pdf).grid(row=0, column=3, padx=5, pady=5)
         
         ttk.Label(self.control_frame, text="Page:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
         self.page_var = tk.StringVar(value="1")
@@ -76,38 +77,41 @@ class PDFReplacerApp:
         self.page_spinbox.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(self.control_frame, text="/ 0").grid(row=2, column=2, sticky=tk.W, padx=5, pady=5)
         
-        ttk.Button(self.control_frame, text="上一页", command=self.prev_page).grid(row=2, column=3, padx=5, pady=5)
-        ttk.Button(self.control_frame, text="下一页", command=self.next_page).grid(row=2, column=4, padx=5, pady=5)
+        ttk.Button(self.control_frame, text="Prev", command=self.prev_page).grid(row=2, column=3, padx=5, pady=5)
+        ttk.Button(self.control_frame, text="Next", command=self.next_page).grid(row=2, column=4, padx=5, pady=5)
         
-        ttk.Label(self.control_frame, text="search text:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.control_frame, text="Search:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
         self.find_text_var = tk.StringVar()
         ttk.Entry(self.control_frame, textvariable=self.find_text_var, width=30).grid(row=3, column=1, columnspan=3, padx=5, pady=5)
-        ttk.Button(self.control_frame, text="查找", command=self.find_text).grid(row=3, column=4, padx=5, pady=5)
+        ttk.Button(self.control_frame, text="Find", command=self.find_text).grid(row=3, column=4, padx=5, pady=5)
         
-        ttk.Label(self.control_frame, text="替换为:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.control_frame, text="Replace with:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
         self.replace_text_var = tk.StringVar()
         ttk.Entry(self.control_frame, textvariable=self.replace_text_var, width=30).grid(row=4, column=1, columnspan=3, padx=5, pady=5)
         
         ttk.Button(self.control_frame, text="Replace", command=self.execute_replacement).grid(row=5, column=2, padx=5, pady=10)
         ttk.Button(self.control_frame, text="save as", command=self.save_pdf).grid(row=5, column=3, padx=5, pady=10)
-        ttk.Button(self.control_frame, text="批量替换", command=self.batch_replace).grid(row=5, column=4, padx=5, pady=10)
+        ttk.Button(self.control_frame, text="Mul", command=self.batch_replace).grid(row=5, column=4, padx=5, pady=10)
+        # Checkbox: apply replacements to all pages
+        self.batch_all_pages = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self.control_frame, text="All pages", variable=self.batch_all_pages).grid(row=5, column=5, padx=5, pady=10, sticky=tk.W)
 
         ttk.Button(self.control_frame, text="+", command=self.zoom_in).grid(row=5, column=0, padx=5, pady=10)
         ttk.Button(self.control_frame, text="-", command=self.zoom_out).grid(row=5, column=1, padx=5, pady=10)
 
-        ttk.Label(self.control_frame, text="log:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.control_frame, text="Log:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
         self.log_text = scrolledtext.ScrolledText(self.control_frame, width=40, height=15)
         self.log_text.grid(row=7, column=0, columnspan=5, padx=5, pady=5)
         
         # --- 新增：可替换文本列表 ---
-        ttk.Label(self.control_frame, text="可替换文本:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.control_frame, text="Detected Text:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
         self.text_listbox = tk.Listbox(self.control_frame, height=8, width=35)
         self.text_listbox.grid(row=9, column=0, columnspan=5, padx=5, pady=5, sticky=tk.W+tk.E)
         self.text_listbox.bind("<<ListboxSelect>>", self.on_text_selected)
         # ---
         
         # 选择文本实例框架，初始状态为隐藏
-        self.instance_frame = ttk.LabelFrame(self.control_frame, text="选择文本实例")
+        self.instance_frame = ttk.LabelFrame(self.control_frame, text="Instances")
         self.instance_var = tk.StringVar()
         self.instance_listbox = tk.Listbox(self.instance_frame, height=5, width=35)
         self.instance_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -117,14 +121,14 @@ class PDFReplacerApp:
         self.buttons_frame = ttk.Frame(self.instance_frame)
         self.buttons_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Button(self.buttons_frame, text="替换所有实例", 
+        ttk.Button(self.buttons_frame, text="Replace All", 
                   command=lambda: self.execute_replacement(replace_all=True)).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.buttons_frame, text="仅替换选中实例",
+        ttk.Button(self.buttons_frame, text="Replace Selected",
                   command=lambda: self.execute_replacement(replace_all=False)).pack(side=tk.RIGHT, padx=5)
         
         # 状态栏
         self.status_var = tk.StringVar()
-        self.status_var.set("ready")
+        self.status_var.set("Ready")
         self.status_bar = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         
@@ -510,7 +514,7 @@ class PDFReplacerApp:
 
             self.log(f"已打开PDF: {pdf_path}")
             self.log(f"总页数: {self.total_pages}")
-            self.status_var.set(f"已打开: {os.path.basename(pdf_path)}")
+            self.status_var.set(f"Opened: {os.path.basename(pdf_path)}")
 
             # 清除选中的实例
             self.selected_text_instance = None
@@ -536,7 +540,7 @@ class PDFReplacerApp:
         self.original_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
         # 设置 scrollregion 以支持滚动条
         self.original_canvas.config(scrollregion=(0, 0, img.width, img.height))
-        self.status_var.set(f"当前页: {self.current_page_num + 1} / {self.total_pages}  分辨率: {self.zoom_factor}x")
+        self.status_var.set(f"Page: {self.current_page_num + 1} / {self.total_pages}  Zoom: {self.zoom_factor}x")
         self.refresh_text_listbox()
 
         # 清除之前的高亮
@@ -670,7 +674,7 @@ class PDFReplacerApp:
                     return decoded_text
 
                 # 导入所需函数并解析CMap
-                from praser import parse_cmap, decode_pdf_string
+                from pdf_parser.core.cmap import parse_cmap, decode_pdf_string
 
                 cmap_str = cmap_bytes.decode('utf-8', errors='ignore')
                 cmap = parse_cmap(cmap_str)
@@ -745,7 +749,7 @@ class PDFReplacerApp:
         # 如果已经找到结果，就直接返回，不再解析内容流，避免重复
         if unique_rects:
             for i, rect in enumerate(unique_rects):
-                instances.append((f"{text_to_find} (实例 {i+1})", rect, i))
+                instances.append((f"{text_to_find} (NO. {i+1})", rect, i))
             return instances
 
         # ------------------- 退回：解析内容流 -------------------
@@ -891,7 +895,7 @@ class PDFReplacerApp:
 
         text_to_find = self.find_text_var.get()
         if not text_to_find:
-            self.log("请输入要查找的文本")
+            messagebox.showinfo("Info", "Please enter text to search")
             return
 
         self.log(f"正在查找文本: '{text_to_find}'")
@@ -943,7 +947,7 @@ class PDFReplacerApp:
             if 0 <= index < len(self.text_positions):  # 确保索引在有效范围内
                 self.selected_text_instance = self.text_positions[index]
                 self.highlight_text_instance(self.selected_text_instance)
-                self.log(f"选中实例 {index+1}")
+                self.log(f"selected: No. {index+1}")
             else:
                 self.log(f"警告：选中的实例索引 {index} 超出范围（总实例数：{len(self.text_positions)}）")
 
@@ -1031,11 +1035,11 @@ class PDFReplacerApp:
         replacement_text = self.replace_text_var.get()
 
         if not target_text:
-            messagebox.showinfo("提示", "请输入要查找的文本")
+            messagebox.showinfo("Info", "Please enter text to search")
             return
 
         if not replacement_text:
-            messagebox.showinfo("提示", "请输入替换文本")
+            messagebox.showinfo("Info", "Please enter replacement text")
             return
 
         # 确定实例索引（如果要替换特定实例）
@@ -1063,7 +1067,7 @@ class PDFReplacerApp:
         output_pdf = os.path.join(output_dir, f"replaced_{base_name}")
 
         # 在新线程中执行替换
-        self.status_var.set("正在替换...")
+        self.status_var.set("Replacing...")
         self.root.update()
 
         threading.Thread(target=self._execute_replacement,
@@ -1075,36 +1079,97 @@ class PDFReplacerApp:
             # 检查替换文本中是否包含原始PDF中不存在的字符
             unsupported_chars = self.check_unsupported_chars(replacement_text, target_text)
             if unsupported_chars:
-                # 弹窗确认是否继续
                 unsupported_chars_str = ''.join(unsupported_chars)
+
+                # 尝试获取目标字体名称
+                try:
+                    page_obj = self.pdf_document[self.current_page_num]
+                    target_font_name = self.get_font_for_text(page_obj, target_text) or "未知字体"
+                except Exception:
+                    target_font_name = "未知字体"
+
+                # 记录缺失字符到日志
+                for ch in unsupported_chars:
+                    self.log(f"⚠️ 字体 {target_font_name} 缺少字符 '{ch}'，已跳过本次替换")
+
                 msg = (
-                    f"替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'\n"
-                    f"这些字符将被跳过或可能显示为占位符。是否继续？"
+                    f"‼️ 替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'\n"
+                    f"将保留原句子并在 PDF 中标记这些字符。是否继续？"
                 )
                 if not messagebox.askyesno("警告", msg):
-                    self.log("替换已取消")
-                    self.root.after(0, lambda: self.status_var.set("替换已取消"))
+                    self.log("已取消")
+                    self.root.after(0, lambda: self.status_var.set("Replacement canceled"))
                     return
 
-                self.log(f"⚠️ 替换文本中包含目标字体不支持的字符: '{unsupported_chars_str}'")
+                # 复制原 PDF 作为输出文件
+                import shutil
+                try:
+                    shutil.copy2(self.current_pdf, output_pdf)
+                    self.log(f"已保留原句子，文件复制为: {output_pdf}")
+                except Exception as ce:
+                    self.log(f"复制 PDF 时出错: {ce}")
+                    self.root.after(0, lambda: self.status_var.set("Copy failed"))
+                    return
 
+                # 在 PDF 中进行标记
+                try:
+                    selected_rect = None
+                    if self.selected_text_instance is not None:
+                        selected_rect = self.selected_text_instance[1]
+                    self.mark_unsupported_characters(
+                        pdf_path=output_pdf,
+                        page_index=self.current_page_num,
+                        unsupported_chars=unsupported_chars,
+                        replacement_text=replacement_text,
+                        target_text=target_text,
+                        instance_rect=selected_rect,
+                        target_font=target_font_name,
+                    )
+                    self.log("已在 PDF 中标记不支持字符的位置")
+                except Exception as me:
+                    self.log(f"标记不支持字符时出错: {me}")
+
+                # 将不支持字符信息写入日志文件
+                try:
+                    with open(os.path.join("output", "replace_log.txt"), "a", encoding="utf-8") as lf:
+                        for ch in unsupported_chars:
+                            lf.write(f"⚠️ 字体 {target_font_name} 缺少字符 '{ch}'，已跳过本次替换\n")
+                except Exception:
+                    pass
+
+                self.root.after(0, lambda: self.status_var.set(f"Skipped replacement, saved: {os.path.basename(output_pdf)}"))
+
+                # 询问是否打开新文件
+                if messagebox.askyesno("完成", f"已保留原句子并标记不支持字符。新文件保存为: {output_pdf}\n\n是否打开新文件？"):
+                    self.root.after(0, lambda: self.open_pdf(output_pdf))
+
+                # 读取警告信息
+                try:
+                    self._show_replace_warnings()
+                except Exception:
+                    pass
+
+                return  # 早退，不再执行后续真正替换逻辑
+
+            # --- 若无不支持字符，继续正常替换流程 ---
             # 计算实际写入PDF的替换文本（去除不支持字符）
             filtered_replacement_text = replacement_text
             if unsupported_chars:
                 filtered_replacement_text = ''.join([c for c in replacement_text if c not in unsupported_chars])
 
-            # 调用替换函数
-            self.log(f"执行替换: '{target_text}' -> '{filtered_replacement_text}'")
-            self.log(f"在第 {self.current_page_num + 1} 页")
+            # Call the replacement function
+            self.log(f"Executing replacement: '{target_text}' -> '{filtered_replacement_text}'")
+            self.log(f"On page {self.current_page_num + 1}")
 
-            replace_text(
+            replace_pdf_text(
                 input_pdf=self.current_pdf,
                 output_pdf=output_pdf,
                 target_text=target_text,
                 replacement_text=filtered_replacement_text,
                 page_num=self.current_page_num,
-                ttf_file=None,
-                instance_index=instance_index  # 传递实例索引
+                instance_index=instance_index,  # 传递实例索引
+                allow_auto_insert=False,
+                verbose=1
             )
 
             # 检查文件是否创建成功
@@ -1128,17 +1193,23 @@ class PDFReplacerApp:
                             instance_rect=selected_rect
                         )
                         self.log("已在 PDF 中标记不支持字符的位置")
+                        # 将不支持字符信息写入日志文件
+                        try:
+                            with open(os.path.join("output", "replace_log.txt"), "a", encoding="utf-8") as lf:
+                                lf.write(f"Unsupported characters skipped: {''.join(unsupported_chars)}\n")
+                        except Exception:
+                            pass
                     except Exception as e:
                         self.log(f"标记不支持字符时出错: {e}")
 
-                self.root.after(0, lambda: self.status_var.set(f"替换成功，文件保存为: {os.path.basename(output_pdf)}"))
+                self.root.after(0, lambda: self.status_var.set(f"Replaced, saved as: {os.path.basename(output_pdf)}"))
 
                 # 询问是否打开新文件
                 if messagebox.askyesno("替换完成", f"替换成功，文件保存为: {output_pdf}\n\n是否打开新文件？"):
                     self.root.after(0, lambda: self.open_pdf(output_pdf))
             else:
                 self.log("替换失败")
-                self.root.after(0, lambda: self.status_var.set("替换失败"))
+                self.root.after(0, lambda: self.status_var.set("Replacement failed"))
 
             # 读取替换日志中的警告信息并提示
             try:
@@ -1150,7 +1221,7 @@ class PDFReplacerApp:
             err_msg = str(e)
             self.log(f"替换错误: {err_msg}")
             # 使用默认参数把字符串绑定到 lambda，避免 e 超出作用域后被清理导致 NameError
-            self.root.after(0, lambda m=err_msg: self.status_var.set("替换错误: " + m))
+            self.root.after(0, lambda m=err_msg: self.status_var.set("Replacement error: " + m))
             self.root.after(0, lambda m=err_msg: messagebox.showerror("错误", f"替换过程中发生错误: {m}"))
 
     def check_unsupported_chars(self, text, target_text=None):
@@ -1232,7 +1303,7 @@ class PDFReplacerApp:
             if char not in target_font_chars and char not in " \t\n\r":
                 unsupported.append(char)
 
-        self.log(f"使用字体: {target_font} 检查替换文本字符")
+        self.log(f"Using font: {target_font} to check replacement text characters")
         return unsupported
 
     def save_pdf(self):
@@ -1250,17 +1321,17 @@ class PDFReplacerApp:
         # 找到最新的replaced_*.pdf
         pdfs = [f for f in os.listdir("output") if f.startswith("replaced_") and f.endswith(".pdf")]
         if not pdfs:
-            messagebox.showinfo("提示", "没有可保存的替换结果，请先执行替换操作")
+            messagebox.showinfo("Info", "No replacement result to save; please run a replacement first")
             return
         latest_pdf = max(pdfs, key=lambda f: os.path.getmtime(os.path.join("output", f)))
         try:
             shutil.copy2(os.path.join("output", latest_pdf), output_pdf)
             self.log(f"文件已保存为: {output_pdf}")
-            self.status_var.set(f"文件已保存为: {os.path.basename(output_pdf)}")
+            self.status_var.set(f"Saved: {os.path.basename(output_pdf)}")
             messagebox.showinfo("保存成功", f"文件已保存为: {output_pdf}")
         except Exception as e:
             self.log(f"保存错误: {str(e)}")
-            self.status_var.set("保存错误")
+            self.status_var.set("Save error")
             messagebox.showerror("错误", f"保存过程中发生错误: {str(e)}")
 
     def on_text_selected(self, event):
@@ -1461,9 +1532,13 @@ class PDFReplacerApp:
             replacement_text (str, optional): 替换后的文本
             target_text (str, optional): 原始待替换文本
             instance_rect (fitz.Rect, optional): 选中实例的矩形
+            target_font (str, optional): 目标字体名称，用于精准过滤
         """
         if not unsupported_chars:
             return
+
+        # 若指定了字体，则使用更精确的 span 级匹配，避免误标记其它字体内容
+        font_filter_enabled = bool(target_font)
 
         import fitz
 
@@ -1491,7 +1566,7 @@ class PDFReplacerApp:
                         annot.set_border(width=2)
                         annot.set_info({"title": "PDF-praser", "content": note_content})
                         annot.update()
-                    except Exception as ee:
+                    except Exception:
                         # 若矩形批注失败则退回高亮
                         try:
                             quad = [rect.x0, rect.y1, rect.x1, rect.y1, rect.x0, rect.y0, rect.x1, rect.y0]
@@ -1512,31 +1587,23 @@ class PDFReplacerApp:
                     add_annots([instance_rect])
                 found_any = True
 
-            # 1) 优先查找替换后的整段文本，避免过度标记
-            if not found_any and replacement_text:
-                rects = page.search_for(replacement_text, flags=0)
-                if rects:
-                    add_annots(rects)
-                    found_any = True
-
-            # 2) 若未找到，则回退到原始目标文本
-            if not found_any and target_text:
-                rects = page.search_for(target_text, flags=0)
-                if rects:
-                    add_annots(rects)
-                    found_any = True
-
-            # 3) 最后才逐字符查找不支持字符，这一步可能产生较多匹配，因此放在末尾并加以限制
-            if not found_any:
-                for ch in unsupported_chars:
-                    if ch.isspace():
-                        continue
-                    rects = page.search_for(ch, flags=0)
+            # 当启用字体过滤时，跳过粗略的 search_for 阶段，直接进入精确匹配
+            if not font_filter_enabled:
+                # 1) 优先查找替换后的整段文本，避免过度标记
+                if not found_any and replacement_text:
+                    rects = page.search_for(replacement_text, flags=0)
                     if rects:
                         add_annots(rects)
                         found_any = True
 
-            # 4) 若仍未找到，尝试在文本块中精准匹配
+                # 2) 若未找到，则回退到原始目标文本
+                if not found_any and target_text:
+                    rects = page.search_for(target_text, flags=0)
+                    if rects:
+                        add_annots(rects)
+                        found_any = True
+
+            # 3) 通过遍历 span 精准匹配（可根据 target_font 过滤）
             if not found_any:
                 try:
                     text_dict = page.get_text("dict")
@@ -1551,10 +1618,11 @@ class PDFReplacerApp:
                                 if any(ch in span_text for ch in unsupported_chars):
                                     rect = fitz.Rect(span["bbox"])
                                     candidate_rects.append(rect)
-                                elif replacement_text and replacement_text in span_text:
+                                elif (not font_filter_enabled) and replacement_text and replacement_text in span_text:
+                                    # 仅当未启用字体过滤时才标记整段替换文本
                                     rect = fitz.Rect(span["bbox"])
                                     candidate_rects.append(rect)
-                                elif target_text and target_text in span_text:
+                                elif (not font_filter_enabled) and target_text and target_text in span_text:
                                     rect = fitz.Rect(span["bbox"])
                                     candidate_rects.append(rect)
                     if candidate_rects:
@@ -1562,6 +1630,16 @@ class PDFReplacerApp:
                         found_any = True
                 except Exception:
                     pass
+
+            # 4) 最后兜底：逐字符 search_for（不建议在启用字体过滤时使用，可能导致误标记）
+            if not found_any and not font_filter_enabled:
+                for ch in unsupported_chars:
+                    if ch.isspace():
+                        continue
+                    rects = page.search_for(ch, flags=0)
+                    if rects:
+                        add_annots(rects)
+                        found_any = True
 
             if found_any:
                 doc.save(pdf_path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
@@ -1584,10 +1662,10 @@ class PDFReplacerApp:
             return
 
         # 在新线程中执行耗时任务
-        self.status_var.set("批量替换进行中...")
-        threading.Thread(target=self._batch_replace_thread, args=(excel_path,)).start()
+        self.status_var.set("Batch replace running...")
+        threading.Thread(target=self._batch_replace_thread, args=(excel_path, self.batch_all_pages.get())).start()
 
-    def _batch_replace_thread(self, excel_path):
+    def _batch_replace_thread(self, excel_path, apply_all_pages=False):
         try:
             self.log(f"读取 Excel: {excel_path}")
             df = pd.read_excel(excel_path, header=None)
@@ -1626,73 +1704,85 @@ class PDFReplacerApp:
                 for idx, (target_text, repl_text) in enumerate(zip(template_texts, replacement_texts)):
                     if not target_text or not repl_text:
                         continue
-                    # 每次替换写到唯一临时文件再覆盖
-                    tmp_path = os.path.join(output_dir, f"_tmp_{uuid.uuid4().hex}.pdf")
-                    try:
-                        # 检查替换文本是否包含未映射字符
-                        unsupported_chars = self.check_unsupported_chars(str(repl_text), target_text=str(target_text))
-                        replace_text(
-                            input_pdf=current_pdf_path,
-                            output_pdf=tmp_path,
-                            target_text=str(target_text),
-                            replacement_text=str(repl_text),
-                            page_num=0,
-                            ttf_file=None,
-                            instance_index=-1
-                        )
-                        # 替换完成后覆盖当前文件（仅当生成文件存在）
-                        if os.path.exists(tmp_path):
-                            shutil.move(tmp_path, current_pdf_path)
-                            self.log(f"   • 替换 {target_text} → {repl_text}")
 
-                            # 如果存在不支持字符，进行标记
-                            if unsupported_chars:
-                                try:
-                                    # 获取目标字体名称
-                                    try:
-                                        fitz_doc = fitz.open(current_pdf_path)
-                                        p0 = fitz_doc[0]
-                                        target_font_name = self.get_font_for_text(p0, str(target_text))
-                                        fitz_doc.close()
-                                    except Exception:
-                                        target_font_name = None
-                                    # 在替换前获取目标文本在页面中的矩形位置
-                                    try:
-                                        doc_before = fitz.open(current_pdf_path)
-                                        page_before = doc_before[0]
-                                        target_rects = page_before.search_for(str(target_text), flags=0)
-                                        doc_before.close()
-                                    except Exception:
-                                        target_rects = []
-                                    self.mark_unsupported_characters(
-                                        pdf_path=current_pdf_path,
-                                        page_index=0,
-                                        unsupported_chars=unsupported_chars,
-                                        replacement_text=str(repl_text),
-                                        target_text=str(target_text),
-                                        instance_rect=target_rects,
-                                        target_font=target_font_name
-                                    )
-                                except Exception as me:
-                                    self.log(f"   ⚠️ 标记不支持字符失败: {me}")
-                        else:
-                            self.log(f"⚠️ 未生成输出文件，可能未找到目标文本 '{target_text}'，已跳过此替换")
-                    except Exception as e:
-                        self.log(f"⚠️ 执行替换时出错 ({target_text}): {e}")
-                        # 清理 tmp
+                    # 需替换的页列表
+                    try:
+                        with fitz.open(current_pdf_path) as _doc:
+                            total_pages_in_pdf = len(_doc)
+                    except Exception:
+                        total_pages_in_pdf = 1
+                    page_indices = range(total_pages_in_pdf) if apply_all_pages else [self.current_page_num]
+
+                    for page_idx in page_indices:
+                        tmp_path = os.path.join(output_dir, f"_tmp_{uuid.uuid4().hex}.pdf")
                         try:
-                            os.remove(tmp_path)
-                        except Exception:
-                            pass
+                            # 检查替换文本是否包含未映射字符
+                            unsupported_chars = self.check_unsupported_chars(str(repl_text), target_text=str(target_text))
+                            # ---------------- 记录缺失字符日志（批量） ----------------
+                            if unsupported_chars:
+                                target_font_name = "未知字体"
+                                try:
+                                    import fitz
+                                    with fitz.open(current_pdf_path) as _pdoc:
+                                        _pg_tmp = _pdoc[page_idx]
+                                        tmp_font = self.get_font_for_text(_pg_tmp, target_text)
+                                        if tmp_font:
+                                            target_font_name = tmp_font
+                                except Exception:
+                                    pass
+
+                                for _ch in unsupported_chars:
+                                    self.log(f"⚠️ 字体 {target_font_name} 缺少字符 '{_ch}'，已跳过本次替换")
+
+                                try:
+                                    from datetime import datetime as _dt
+                                    _log_path = os.path.join("output", "replace_log.txt")
+                                    with open(_log_path, "a", encoding="utf-8") as __lf:
+                                        __lf.write(f"\n===== {_dt.now().strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                                        for _ch in unsupported_chars:
+                                            __lf.write(f"⚠️ 字体 {target_font_name} 缺少字符 '{_ch}'，已跳过本次替换\n")
+                                except Exception:
+                                    pass
+                            # --------------------------------------------------------
+                            replace_pdf_text(
+                                input_pdf=current_pdf_path,
+                                output_pdf=tmp_path,
+                                target_text=str(target_text),
+                                replacement_text=str(repl_text),
+                                page_num=page_idx,
+                                instance_index=-1,
+                                allow_auto_insert=False,
+                                verbose=1
+                            )
+                            if os.path.exists(tmp_path):
+                                shutil.move(tmp_path, current_pdf_path)
+                                self.log(f"   • Page {page_idx+1}: {target_text} → {repl_text}")
+                                if unsupported_chars:
+                                    try:
+                                        self.mark_unsupported_characters(
+                                            pdf_path=current_pdf_path,
+                                            page_index=page_idx,
+                                            unsupported_chars=unsupported_chars,
+                                            replacement_text=str(repl_text),
+                                            target_text=str(target_text)
+                                        )
+                                    except Exception as me:
+                                        self.log(f"   ⚠️ 标记不支持字符失败: {me}")
+                        except Exception as e:
+                            self.log(f"   ⚠️ Page {page_idx+1} error ({target_text}): {e}")
+                            try:
+                                os.remove(tmp_path)
+                            except Exception:
+                                pass
 
                 self.log(f"✅ 生成完成: {output_pdf}")
 
-            self.root.after(0, lambda: self.status_var.set("批量替换完成"))
+            self.root.after(0, lambda: self.status_var.set("Batch replace done"))
 
         except Exception as e:
             err = str(e)
             self.log(f"批量替换错误: {err}")
-            self.root.after(0, lambda: self.status_var.set("批量替换错误"))
+            self.root.after(0, lambda: self.status_var.set("Batch replace error"))
 
     def get_font_for_text(self, page, search_text):
         """返回页面中包含 search_text 的第一处 span 的字体名，如找不到则返回 None"""

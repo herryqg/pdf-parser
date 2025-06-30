@@ -1,5 +1,37 @@
-inputs
-.idea
-fonts
-output
-extracted_pages
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Mac OS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Project specific
+inputs/
+output/
+extracted_pages/
+fonts/
+
+# Log files
+*.log
