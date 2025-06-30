@@ -19,7 +19,7 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 pip install -e .
 
 # From GitHub
-pip install git+https://github.com/your-username/pdf-parser.git
+pip install git+https://github.com/herryqg/pdf-parser.git
 
 # Dependencies
 pip install pikepdf fonttools PyMuPDF
