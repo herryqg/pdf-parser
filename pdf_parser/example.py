@@ -2,7 +2,6 @@
 """Example script demonstrating the PDF Parser API."""
 
 import os
-import sys
 import argparse
 from pdf_parser.api import PDFTextReplacer, replace_pdf_text
 

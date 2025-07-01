@@ -1,6 +1,5 @@
 """Public API for the PDF Parser module."""
 
-from .core.cmap import parse_cmap, decode_pdf_string
 from .core.replacer import replace_text
 from .fonts.analysis import get_font_cmaps_from_reference, analyze_font_mappings
 
