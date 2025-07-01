@@ -6,9 +6,9 @@ setup(
     description="A tool for parsing and modifying PDF text content with font-aware character handling",
     long_description=open("README.md", "r").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/your-username/pdf-parser",
-    author="Your Name",
-    author_email="your.email@example.com",
+    url="https://github.com/herryqg/pdf-parser",
+    author="qiang",
+    author_email="guoqh670@gmail.com",
     packages=find_packages(),
     install_requires=[
         "pikepdf>=2.0.0",
