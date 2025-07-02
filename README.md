@@ -5,6 +5,7 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 ## Features
 
 - **Precise Text Replacement**: Replace specific text instances in PDF documents
+- **Text Search**: Search for text in PDF documents with contextual results
 - **Font-Aware Processing**: Handles complex font encoding and character mappings
 - **Multi-instance Support**: Replace single or all instances of target text
 - **Character Validation**: Verifies replacement text compatibility with document fonts
@@ -36,21 +37,39 @@ pip install pikepdf fonttools PyMuPDF
 
 ### Command-line Usage
 
+#### Text Replacement
+
 ```bash
 # Basic text replacement
-python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text"
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text"
 
 # Replace text on a specific page (0-based index)
-python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --page 2
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --page 2
 
 # Replace a specific instance of text (0-based index)
-python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --instance 1
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --instance 1
 
 # Control verbosity level (0-3)
-python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --verbose 2
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --verbose 2
 
 # Allow automatic insertion of characters not in the font
-python -m pdf_parser.example --input input.pdf --find "Original text" --replace "New text" --allow-auto-insert
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --allow-auto-insert
+```
+
+#### Text Search
+
+```bash
+# Basic text search (searches in all pages)
+python -m pdf_parser.example search --input input.pdf --find "Search text"
+
+# Search on a specific page (0-based index)
+python -m pdf_parser.example search --input input.pdf --find "Search text" --page 2
+
+# Case-sensitive search
+python -m pdf_parser.example search --input input.pdf --find "Search text" --case-sensitive
+
+# Get results in JSON format for further processing
+python -m pdf_parser.example search --input input.pdf --find "Search text" --json
 ```
 
 ### Python API
@@ -86,6 +105,24 @@ success = replacer.replace_text(
     instance_index=-1
 )
 
+# Search for text
+results = replacer.search_text(
+    pdf_path="input.pdf",
+    search_text="Search text",
+    page_num=None,  # None for all pages, or specific page index (0-based)
+    case_sensitive=False
+)
+
+# Search using the function directly
+from pdf_parser.api import search_text_in_pdf
+
+results = search_text_in_pdf(
+    pdf_path="input.pdf",
+    search_text="Search text",
+    page_num=None,  # None for all pages, or specific page index (0-based)
+    case_sensitive=False
+)
+
 # Analyze font mappings
 replacer.analyze_fonts("input.pdf", "font_analysis.txt")
 
@@ -116,7 +153,9 @@ pdf-parser/
 │   │   ├── cmap.py            # CMap parsing and manipulation
 │   │   └── replacer.py        # Text replacement engine
 │   ├── fonts/                 # Font handling
-│   │   └── ...
+│   │   ├── __init__.py
+│   │   ├── analysis.py        # Font analysis tools
+│   │   └── embedding.py       # Font embedding utilities
 │   └── utils/                 # Utility functions
 │       └── ...
 ├── pdf_gui.py                 # Optional GUI interface
