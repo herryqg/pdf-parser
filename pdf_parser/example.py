@@ -108,6 +108,7 @@ def main():
                 if args.json:
                     # JSON格式输出
                     print(json.dumps(results, indent=2))
+                    json.dump(results, open("search_results.json", "w"), indent=2)
                 else:
                     # 友好格式输出
                     print(f"\n✅ Found {len(results)} instances of '{args.find}':")

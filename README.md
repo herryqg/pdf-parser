@@ -1,3 +1,4 @@
+
 # PDF Parser and Text Replacement Tool
 
 A powerful Python library for parsing and modifying text content in PDF files with precise character-level control. This tool allows you to replace text in PDF documents while preserving the original formatting and layout.
