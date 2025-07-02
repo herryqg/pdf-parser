@@ -5,7 +5,8 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 ## Features
 
 - **Precise Text Replacement**: Replace specific text instances in PDF documents
-- **Text Search**: Search for text in PDF documents with contextual results
+- **Text Search**: Search for text in PDF documents with contextual results and exact coordinates
+- **Text Extraction**: Parse and extract all replaceable text from PDF pages with position information
 - **Font-Aware Processing**: Handles complex font encoding and character mappings
 - **Multi-instance Support**: Replace single or all instances of target text
 - **Character Validation**: Verifies replacement text compatibility with document fonts
@@ -72,6 +73,19 @@ python -m pdf_parser.example search --input input.pdf --find "Search text" --cas
 python -m pdf_parser.example search --input input.pdf --find "Search text" --json
 ```
 
+#### Text Extraction (Parse)
+
+```bash
+# Extract all replaceable text from a specific page
+python -m pdf_parser.example parse --input input.pdf --page 2
+
+# Include text coordinates in the output
+python -m pdf_parser.example parse --input input.pdf --page 2 --with-coordinates
+
+# Get results in JSON format for further processing
+python -m pdf_parser.example parse --input input.pdf --page 2 --json
+```
+
 ### Python API
 
 ```python
@@ -105,12 +119,18 @@ success = replacer.replace_text(
     instance_index=-1
 )
 
-# Search for text
+# Search for text (includes coordinate information)
 results = replacer.search_text(
     pdf_path="input.pdf",
     search_text="Search text",
     page_num=None,  # None for all pages, or specific page index (0-based)
     case_sensitive=False
+)
+
+# Parse all replaceable text from a page (with coordinates)
+text_elements = replacer.parse_page_text(
+    pdf_path="input.pdf",
+    page_num=0  # 0-based page index
 )
 
 # Search using the function directly
@@ -121,6 +141,14 @@ results = search_text_in_pdf(
     search_text="Search text",
     page_num=None,  # None for all pages, or specific page index (0-based)
     case_sensitive=False
+)
+
+# Parse page text using the function directly
+from pdf_parser.api import parse_page_text
+
+text_elements = parse_page_text(
+    pdf_path="input.pdf",
+    page_num=0  # 0-based page index
 )
 
 # Analyze font mappings
@@ -161,6 +189,51 @@ pdf-parser/
 ├── pdf_gui.py                 # Optional GUI interface
 ├── setup.py                   # Package installation configuration
 └── README.md                  # Documentation
+```
+
+## Returned Data Structure
+
+### Search Results
+
+The search function returns a list of dictionaries with the following structure:
+
+```python
+[
+  {
+    "page": 0,                    # 0-based page index
+    "text": "Search text",        # The matched text
+    "context": "... surrounding text ...",  # Context around the match
+    "rect": {                     # Text rectangle coordinates
+      "x0": 100.0,                # Left position
+      "y0": 200.0,                # Top position
+      "x1": 150.0,                # Right position
+      "y1": 220.0                 # Bottom position
+    },
+    "block_order": 3              # Order in the text flow
+  },
+  # ...more results
+]
+```
+
+### Parse Results
+
+The parse function returns a list of dictionaries with the following structure:
+
+```python
+[
+  {
+    "text": "Extracted text",     # The extracted text content
+    "rect": {                     # Text rectangle coordinates
+      "x0": 100.0,                # Left position
+      "y0": 200.0,                # Top position
+      "x1": 150.0,                # Right position
+      "y1": 220.0                 # Bottom position
+    },
+    "font": "/F1",                # Font name (if available)
+    "source": "content_stream"    # Source of extraction (pymupdf or content_stream)
+  },
+  # ...more text elements
+]
 ```
 
 ## Character Validation

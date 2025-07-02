@@ -4,7 +4,7 @@
 import os
 import argparse
 import json
-from pdf_parser.api import PDFTextReplacer, replace_pdf_text, search_text_in_pdf
+from pdf_parser.api import PDFTextReplacer, replace_pdf_text, search_text_in_pdf, parse_page_text
 
 def main():
     parser = argparse.ArgumentParser(description="PDF Text Replacement and Search Tool")
@@ -37,6 +37,13 @@ def main():
     search_parser.add_argument("--page", "-p", type=int, help="Page number to search (0-based, omit to search all pages)")
     search_parser.add_argument("--case-sensitive", "-cs", action="store_true", help="Enable case-sensitive search")
     search_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
+    
+    # 解析命令
+    parse_parser = subparsers.add_parser("parse", help="Parse and extract all replaceable text from a PDF page")
+    parse_parser.add_argument("--input", "-i", required=True, help="Input PDF file path")
+    parse_parser.add_argument("--page", "-p", type=int, default=0, help="Page number (0-based, default: 0)")
+    parse_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
+    parse_parser.add_argument("--with-coordinates", "-c", action="store_true", help="Include text coordinates in output")
     
     args = parser.parse_args()
     
@@ -112,11 +119,57 @@ def main():
                         if len(context) > max_context:
                             context = context[:max_context] + "..."
                         print(f"  {i+1}. Page {page}: {context}")
+                        
+                        # 输出坐标信息
+                        if "rect" in result:
+                            rect = result["rect"]
+                            print(f"     Position: x0={rect['x0']:.2f}, y0={rect['y0']:.2f}, x1={rect['x1']:.2f}, y1={rect['y1']:.2f}")
             else:
                 print(f"❌ No occurrences of '{args.find}' found.")
                 
         except Exception as e:
             print(f"❌ Error during search: {e}")
+            
+    # 处理解析命令
+    elif args.command == "parse":
+        try:
+            # 执行页面解析
+            print(f"Parsing text from page {args.page+1} in {args.input}...")
+            
+            results = parse_page_text(
+                pdf_path=args.input,
+                page_num=args.page
+            )
+            
+            # 输出结果
+            if results:
+                if args.json:
+                    # JSON格式输出
+                    print(json.dumps(results, indent=2))
+                else:
+                    # 友好格式输出
+                    print(f"\n✅ Extracted {len(results)} text elements from page {args.page+1}:")
+                    for i, result in enumerate(results):
+                        text = result["text"]
+                        # 截取文本，避免过长
+                        max_text = 100
+                        if len(text) > max_text:
+                            text = text[:max_text] + "..."
+                        print(f"  {i+1}. {text}")
+                        
+                        # 如果指定了输出坐标
+                        if args.with_coordinates and "rect" in result and result["rect"]:
+                            rect = result["rect"]
+                            print(f"     Position: x0={rect['x0']:.2f}, y0={rect['y0']:.2f}, x1={rect['x1']:.2f}, y1={rect['y1']:.2f}")
+                        
+                        # 如果有字体信息，则输出
+                        if "font" in result:
+                            print(f"     Font: {result['font']}")
+            else:
+                print(f"❌ No text elements extracted from page {args.page+1}.")
+                
+        except Exception as e:
+            print(f"❌ Error during parsing: {e}")
 
 if __name__ == "__main__":
     main() 
