@@ -1,0 +1,36 @@
+        if i < len(encoded_bytes):
+            code = encoded_bytes[i]
+            byte_repr = f"{code:02X}"
+            msg.append(f"  '{char}' → {byte_repr}")
+        
+    if log_list is not None:
+        log_list.append("\n".join(msg))
+    elif debug:
+        print("\n".join(msg))
+
+
+def print_rendering_mapping(font_ref, char, byte_code, log_list=None, debug=False):
+    """
+    Print mapping between a character and its rendering process.
+    
+    Args:
+        font_ref: Font reference from PDF
+        char: Unicode character
+        byte_code: Byte code in PDF stream
+        log_list: List to append log messages
+        debug: Whether to enable detailed debug output
+    """
+    msg = []
+    msg.append(f"  Character: '{char}' (Unicode: U+{ord(char):04X})")
+    msg.append(f"  Stream encoding: 0x{byte_code:02X}")
+    
+    if "/Encoding" in font_ref:
+        encoding_name = "Custom"
+        if isinstance(font_ref["/Encoding"], pikepdf.Name):
+            encoding_name = str(font_ref["/Encoding"])
+        msg.append(f"  Encoding: {encoding_name}")
+        
+    if log_list is not None:
+        log_list.append("\n".join(msg))
+    elif debug:
+        print("\n".join(msg)) 

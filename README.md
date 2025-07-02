@@ -14,6 +14,7 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 - **Flexible API**: Both functional and class-based interfaces for integration
 - **GUI Interface**: Optional graphical interface for interactive text replacement
 - **Hierarchical JSON Output**: Groups text instances in a two-level JSON structure for easy processing
+- **Nested Text Filtering**: Automatically filters out text boxes that are completely contained within larger text boxes
 
 ## Installation
 
@@ -333,3 +334,4 @@ This format groups identical text occurrences together, making it easier to proc
 - The `instance_index` field tracks the occurrence order in the document
 - Coordinates (`rect`) are matched with text instances in the correct order
 - Multiple occurrences of identical text (like "40V5C") each get their own accurate coordinates
+- Nested text boxes are filtered out - smaller text boxes completely contained within larger ones are removed

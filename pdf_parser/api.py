@@ -13,6 +13,11 @@ def parse_page_text(pdf_path, page_num=0):
         
     Returns:
         list: 包含可替换文本的列表，每项为dict，包含文本内容和位置信息
+        
+    Notes:
+        - 提取文本时会过滤掉被其他文本框完全包含的文本框
+        - 文本框按面积从大到小排序，较小的文本框如果完全位于较大文本框内则被过滤
+        - 相同文本的不同实例会根据其在文档中的顺序获得正确的坐标
     """
     import fitz  # PyMuPDF
     import pikepdf
@@ -274,7 +279,60 @@ def parse_page_text(pdf_path, page_num=0):
         # 关闭PyMuPDF文档
         doc_mupdf.close()
         
-        return results
+        # 过滤掉被包含在其他框内部的文本框
+        filtered_results = []
+        # 首先，按照面积大小降序排列（从大到小）
+        if results:
+            # 计算所有矩形的面积
+            for result in results:
+                if result.get("rect"):
+                    rect = result["rect"]
+                    # 计算矩形面积
+                    area = (rect["x1"] - rect["x0"]) * (rect["y1"] - rect["y0"])
+                    result["area"] = area
+                else:
+                    result["area"] = 0
+            
+            # 按面积排序
+            sorted_results = sorted(results, key=lambda x: x.get("area", 0), reverse=True)
+            
+            # 过滤被包含的框
+            for i, result in enumerate(sorted_results):
+                rect1 = result.get("rect")
+                is_contained = False
+                
+                # 如果没有坐标信息，则保留
+                if not rect1:
+                    filtered_results.append(result)
+                    continue
+                
+                # 检查是否被其他（更大的）框包含
+                for j, larger_result in enumerate(sorted_results[:i]):  # 只检查面积更大的框
+                    rect2 = larger_result.get("rect")
+                    if not rect2:
+                        continue
+                        
+                    # 判断rect1是否被rect2完全包含
+                    if (rect1["x0"] >= rect2["x0"] and 
+                        rect1["y0"] >= rect2["y0"] and 
+                        rect1["x1"] <= rect2["x1"] and 
+                        rect1["y1"] <= rect2["y1"]):
+                        # 完全包含，标记为已包含
+                        is_contained = True
+                        break
+                
+                # 如果不被任何框包含，则添加到过滤结果中
+                if not is_contained:
+                    filtered_results.append(result)
+                    
+            # 移除临时的area字段
+            for result in filtered_results:
+                if "area" in result:
+                    del result["area"]
+        else:
+            filtered_results = results
+            
+        return filtered_results
         
     except Exception as e:
         raise Exception(f"解析PDF页面时出错: {str(e)}")
