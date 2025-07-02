@@ -1,0 +1,1 @@
+"""Font handling and analysis functionality for PDF text processing.""" 

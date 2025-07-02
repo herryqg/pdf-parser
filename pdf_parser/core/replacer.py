@@ -14,15 +14,15 @@ RENDER_LOG = False
 
 def log_message(log_list, level, message, print_to_console=True):
     """
-    添加格式化的日志消息到日志列表，并可选择打印到控制台
+    Log a message with a specific level and optional console output.
     
     Args:
-        log_list: 存储日志的列表
+        log_list: 日志列表，用于存储日志消息
         level: 日志级别 (INFO, DEBUG, WARNING, ERROR, SUCCESS, DATA)
         message: 日志消息内容
         print_to_console: 是否将消息打印到控制台
     """
-    # 移除表情符号前缀，使用统一的日志格式
+
     prefix_map = {
         "INFO": "INFO",
         "DEBUG": "DEBUG",
@@ -34,12 +34,10 @@ def log_message(log_list, level, message, print_to_console=True):
     
     prefix = prefix_map.get(level, "INFO")
     formatted_message = f"[{prefix}] {message}"
-    
-    # 添加到日志列表
+
     if log_list is not None:
         log_list.append(formatted_message)
-    
-    # 打印到控制台
+
     if print_to_console:
         print(formatted_message)
 

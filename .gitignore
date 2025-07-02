@@ -31,7 +31,7 @@ ENV/
 inputs/
 output/
 extracted_pages/
-fonts/
+/fonts/
 
 # Log files
 *.log
