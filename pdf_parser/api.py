@@ -3,14 +3,13 @@
 from .core.replacer import replace_text
 from .fonts.analysis import get_font_cmaps_from_reference, analyze_font_mappings
 
-def parse_page_text(pdf_path, page_num=0, include_all_instances=False):
+def parse_page_text(pdf_path, page_num=0):
     """
     解析PDF页面中的可替换文本并返回列表，严格按照GUI中的实现逻辑。
     
     Args:
         pdf_path (str): PDF文件路径
         page_num (int): 页码 (0-based)
-        include_all_instances (bool): 是否包含文本的所有实例位置，默认False只返回第一个实例
         
     Returns:
         list: 包含可替换文本的列表，每项为dict，包含文本内容和位置信息
@@ -136,54 +135,24 @@ def parse_page_text(pdf_path, page_num=0, include_all_instances=False):
                 if text_str and text_str not in found_set:
                     # 使用PyMuPDF搜索文本位置
                     text_instances = page.search_for(text_str)
-                    
-                    # 处理文本实例
+                    rect = None
                     if text_instances:
-                        if include_all_instances:
-                            # 包含所有实例
-                            rect_list = []
-                            for rect in text_instances:
-                                rect_dict = {
-                                    "x0": rect.x0,
-                                    "y0": rect.y0, 
-                                    "x1": rect.x1,
-                                    "y1": rect.y1
-                                }
-                                rect_list.append(rect_dict)
-                            
-                            # 添加到结果列表，包含所有实例位置
-                            results.append({
-                                "text": text_str,
-                                "instances": rect_list,
-                                "font": font_name,
-                                "encoded_bytes": encoded_bytes.hex()
-                            })
-                        else:
-                            # 只包含第一个实例
-                            rect = text_instances[0]
-                            rect_dict = {
-                                "x0": rect.x0,
-                                "y0": rect.y0, 
-                                "x1": rect.x1,
-                                "y1": rect.y1
-                            }
-                            
-                            # 添加到结果列表
-                            results.append({
-                                "text": text_str,
-                                "rect": rect_dict,
-                                "font": font_name,
-                                "encoded_bytes": encoded_bytes.hex()
-                            })
-                    else:
-                        # 未找到实例，仍然添加文本信息
-                        results.append({
-                            "text": text_str,
-                            "rect": None if not include_all_instances else [],
-                            "font": font_name,
-                            "encoded_bytes": encoded_bytes.hex()
-                        })
+                        # 使用第一个找到的实例位置
+                        rect = text_instances[0]
+                        rect_dict = {
+                            "x0": rect.x0,
+                            "y0": rect.y0, 
+                            "x1": rect.x1,
+                            "y1": rect.y1
+                        }
                     
+                    # 添加到结果列表
+                    results.append({
+                        "text": text_str,
+                        "rect": rect_dict if rect else None,
+                        "font": font_name,
+                        "encoded_bytes": encoded_bytes.hex()
+                    })
                     found_set.add(text_str)
             
             # 3. 如果没有找到任何文本，回退到PyMuPDF（与GUI逻辑一致）
@@ -199,36 +168,17 @@ def parse_page_text(pdf_path, page_num=0, include_all_instances=False):
                         try:
                             text_instances = page.search_for(line)
                             if text_instances:
-                                if include_all_instances:
-                                    # 包含所有实例
-                                    rect_list = []
-                                    for rect in text_instances:
-                                        rect_dict = {
-                                            "x0": rect.x0,
-                                            "y0": rect.y0, 
-                                            "x1": rect.x1,
-                                            "y1": rect.y1
-                                        }
-                                        rect_list.append(rect_dict)
-                                    
-                                    results.append({
-                                        "text": line,
-                                        "instances": rect_list,
-                                        "source": "pymupdf_fallback"
-                                    })
-                                else:
-                                    # 只包含第一个实例
-                                    rect = text_instances[0]
-                                    results.append({
-                                        "text": line,
-                                        "rect": {
-                                            "x0": rect.x0,
-                                            "y0": rect.y0, 
-                                            "x1": rect.x1,
-                                            "y1": rect.y1
-                                        },
-                                        "source": "pymupdf_fallback"
-                                    })
+                                rect = text_instances[0]
+                                results.append({
+                                    "text": line,
+                                    "rect": {
+                                        "x0": rect.x0,
+                                        "y0": rect.y0, 
+                                        "x1": rect.x1,
+                                        "y1": rect.y1
+                                    },
+                                    "source": "pymupdf_fallback"
+                                })
                                 found_set.add(line)
                         except Exception:
                             pass
@@ -245,7 +195,7 @@ def parse_page_text(pdf_path, page_num=0, include_all_instances=False):
                     if line:
                         results.append({
                             "text": line,
-                            "rect": None if not include_all_instances else [],
+                            "rect": None,
                             "source": "pymupdf_basic"
                         })
             except Exception:
@@ -429,19 +379,18 @@ class PDFTextReplacer:
         """
         return search_text_in_pdf(pdf_path, search_text, page_num, case_sensitive)
         
-    def parse_page_text(self, pdf_path, page_num=0, include_all_instances=False):
+    def parse_page_text(self, pdf_path, page_num=0):
         """
         解析PDF页面中的可替换文本并返回列表。
         
         Args:
             pdf_path (str): PDF文件路径
             page_num (int): 页码 (0-based)
-            include_all_instances (bool): 是否包含文本的所有实例位置，默认False只返回第一个实例
             
         Returns:
             list: 包含可替换文本的列表，每项为dict，包含文本内容和位置信息
         """
-        return parse_page_text(pdf_path, page_num, include_all_instances)
+        return parse_page_text(pdf_path, page_num)
 
 
 # Simplified functions for direct use without creating a class instance

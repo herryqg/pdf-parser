@@ -42,32 +42,35 @@ pip install pikepdf fonttools PyMuPDF
 
 ```bash
 # Basic text replacement
-python -m pdf_parser.example replace --input input.pdf --target "Original text" --replacement "New text"
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text"
 
 # Replace text on a specific page (0-based index)
-python -m pdf_parser.example replace --input input.pdf --target "Original text" --replacement "New text" --page 2
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --page 2
 
 # Replace a specific instance of text (0-based index)
-python -m pdf_parser.example replace --input input.pdf --target "Original text" --replacement "New text" --instance 1
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --instance 1
+
+# Control verbosity level (0-3)
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --verbose 2
 
 # Allow automatic insertion of characters not in the font
-python -m pdf_parser.example replace --input input.pdf --target "Original text" --replacement "New text" --auto-insert
+python -m pdf_parser.example replace --input input.pdf --find "Original text" --replace "New text" --allow-auto-insert
 ```
 
 #### Text Search
 
 ```bash
 # Basic text search (searches in all pages)
-python -m pdf_parser.example search --input input.pdf --text "Search text"
+python -m pdf_parser.example search --input input.pdf --find "Search text"
 
 # Search on a specific page (0-based index)
-python -m pdf_parser.example search --input input.pdf --text "Search text" --page 2
+python -m pdf_parser.example search --input input.pdf --find "Search text" --page 2
 
 # Case-sensitive search
-python -m pdf_parser.example search --input input.pdf --text "Search text" --case-sensitive
+python -m pdf_parser.example search --input input.pdf --find "Search text" --case-sensitive
 
 # Get results in JSON format for further processing
-python -m pdf_parser.example search --input input.pdf --text "Search text" --json
+python -m pdf_parser.example search --input input.pdf --find "Search text" --json
 ```
 
 #### Text Extraction (Parse)
@@ -76,8 +79,8 @@ python -m pdf_parser.example search --input input.pdf --text "Search text" --jso
 # Extract all replaceable text from a specific page
 python -m pdf_parser.example parse --input input.pdf --page 2
 
-# Include all instances of each text (not just the first one)
-python -m pdf_parser.example parse --input input.pdf --page 2 --all-instances
+# Include text coordinates in the output
+python -m pdf_parser.example parse --input input.pdf --page 2 --with-coordinates
 
 # Get results in JSON format for further processing
 python -m pdf_parser.example parse --input input.pdf --page 2 --json
@@ -130,13 +133,6 @@ text_elements = replacer.parse_page_text(
     page_num=0  # 0-based page index
 )
 
-# Parse all replaceable text with all instances of each text
-text_elements_with_all_instances = replacer.parse_page_text(
-    pdf_path="input.pdf",
-    page_num=0,  # 0-based page index
-    include_all_instances=True  # Include all instances of each text, not just the first one
-)
-
 # Search using the function directly
 from pdf_parser.api import search_text_in_pdf
 
@@ -153,13 +149,6 @@ from pdf_parser.api import parse_page_text
 text_elements = parse_page_text(
     pdf_path="input.pdf",
     page_num=0  # 0-based page index
-)
-
-# Parse page text with all instances
-text_elements_with_all_instances = parse_page_text(
-    pdf_path="input.pdf",
-    page_num=0,  # 0-based page index
-    include_all_instances=True  # Include all instances of each text
 )
 
 # Analyze font mappings
@@ -231,7 +220,6 @@ The search function returns a list of dictionaries with the following structure:
 The parse function returns a list of dictionaries with the following structure:
 
 ```python
-# Default mode (include_all_instances=False)
 [
   {
     "text": "Extracted text",     # The extracted text content
@@ -243,31 +231,6 @@ The parse function returns a list of dictionaries with the following structure:
     },
     "font": "/F1",                # Font name (if available)
     "source": "content_stream"    # Source of extraction (pymupdf or content_stream)
-  },
-  # ...more text elements
-]
-
-# With include_all_instances=True
-[
-  {
-    "text": "Extracted text",     # The extracted text content
-    "instances": [                # List of all instances of this text
-      {
-        "x0": 100.0,              # Left position of first instance
-        "y0": 200.0,              # Top position of first instance
-        "x1": 150.0,              # Right position of first instance
-        "y1": 220.0               # Bottom position of first instance
-      },
-      {
-        "x0": 300.0,              # Left position of second instance
-        "y0": 400.0,              # Top position of second instance
-        "x1": 350.0,              # Right position of second instance
-        "y1": 420.0               # Bottom position of second instance
-      }
-      # ...more instances
-    ],
-    "font": "/F1",                # Font name (if available)
-    "source": "content_stream"    # Source of extraction
   },
   # ...more text elements
 ]
