@@ -3,13 +3,14 @@
 from .core.replacer import replace_text
 from .fonts.analysis import get_font_cmaps_from_reference, analyze_font_mappings
 
-def parse_page_text(pdf_path, page_num=0):
+def parse_page_text(pdf_path, page_num=0, merge_fragments=False):
     """
     解析PDF页面中的可替换文本并返回列表，严格按照GUI中的实现逻辑。
     
     Args:
         pdf_path (str): PDF文件路径
         page_num (int): 页码 (0-based)
+        merge_fragments (bool): 是否合并相邻的文本片段
         
     Returns:
         list: 包含可替换文本的列表，每项为dict，包含文本内容和位置信息
@@ -129,11 +130,64 @@ def parse_page_text(pdf_path, page_num=0):
             # 关闭pikepdf文档
             pdf.close()
             
-            # 2. 从解码项目中提取所有文本项（不再去重，按照内容流原始顺序）
+            # 处理原始解码项
+            decoded_fragments = []
+            
+            for font_name, text_str, encoded_bytes in decoded_items:
+                if text_str:
+                    decoded_fragments.append((font_name, text_str, encoded_bytes))
+            
+            # 如果需要合并文本片段
+            if merge_fragments:
+                merged_fragments = []
+                current_merged = None
+                
+                for i, (font_name, text_str, encoded_bytes) in enumerate(decoded_fragments):
+                    # 如果是第一个元素或需要开始新的合并
+                    if current_merged is None:
+                        current_merged = {
+                            "font": font_name,
+                            "text": text_str,
+                            "encoded_bytes": [encoded_bytes],
+                            "start_index": i,
+                            "end_index": i
+                        }
+                    # 如果字体相同，且看起来是同一个单词的一部分（没有空格）
+                    elif font_name == current_merged["font"] and not (current_merged["text"].endswith(" ") or text_str.startswith(" ")):
+                        # 合并文本
+                        current_merged["text"] += text_str
+                        current_merged["encoded_bytes"].append(encoded_bytes)
+                        current_merged["end_index"] = i
+                    # 如果不能合并，完成当前合并并开始新的
+                    else:
+                        merged_fragments.append(current_merged)
+                        current_merged = {
+                            "font": font_name,
+                            "text": text_str,
+                            "encoded_bytes": [encoded_bytes],
+                            "start_index": i,
+                            "end_index": i
+                        }
+                
+                # 添加最后一个合并项
+                if current_merged is not None:
+                    merged_fragments.append(current_merged)
+                
+                # 从合并后的片段创建处理项
+                processing_items = []
+                for item in merged_fragments:
+                    # 对于合并的片段，连接encoded_bytes
+                    combined_bytes = b''.join(item["encoded_bytes"])
+                    processing_items.append((item["font"], item["text"], combined_bytes))
+            else:
+                # 不合并，直接使用原始解码项
+                processing_items = decoded_fragments
+            
+            # 2. 从处理项目中提取所有文本项
             # 跟踪已处理的文本实例数量
             text_instance_counts = {}
             
-            for font_name, text_str, encoded_bytes in decoded_items:
+            for font_name, text_str, encoded_bytes in processing_items:
                 if text_str:
                     # 初始化计数器（如果不存在）
                     if text_str not in text_instance_counts:
@@ -449,18 +503,19 @@ class PDFTextReplacer:
         """
         return search_text_in_pdf(pdf_path, search_text, page_num, case_sensitive)
         
-    def parse_page_text(self, pdf_path, page_num=0):
+    def parse_page_text(self, pdf_path, page_num=0, merge_fragments=False):
         """
         解析PDF页面中的可替换文本并返回列表。
         
         Args:
             pdf_path (str): PDF文件路径
             page_num (int): 页码 (0-based)
+            merge_fragments (bool): 是否合并相邻的文本片段
             
         Returns:
             list: 包含可替换文本的列表，每项为dict，包含文本内容和位置信息
         """
-        return parse_page_text(pdf_path, page_num)
+        return parse_page_text(pdf_path, page_num, merge_fragments)
 
 
 # Simplified functions for direct use without creating a class instance

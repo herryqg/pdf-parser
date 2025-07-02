@@ -14,6 +14,7 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 - **Flexible API**: Both functional and class-based interfaces for integration
 - **GUI Interface**: Optional graphical interface for interactive text replacement
 - **Hierarchical JSON Output**: Groups text instances in a two-level JSON structure for easy processing
+- **Text Fragment Merging**: Intelligently combines adjacent text fragments to handle split words/characters
 
 ## Installation
 
@@ -85,6 +86,9 @@ python -m pdf_parser.example parse --input input.pdf --page 2
 
 # Include text coordinates in the output
 python -m pdf_parser.example parse --input input.pdf --page 2 --with-coordinates
+
+# Merge adjacent text fragments (fixes single character boxes)
+python -m pdf_parser.example parse --input input.pdf --page 2 --merge-fragments
 
 # Get results in JSON format for further processing
 python -m pdf_parser.example parse --input input.pdf --page 2 --json
@@ -333,3 +337,28 @@ This format groups identical text occurrences together, making it easier to proc
 - The `instance_index` field tracks the occurrence order in the document
 - Coordinates (`rect`) are matched with text instances in the correct order
 - Multiple occurrences of identical text (like "40V5C") each get their own accurate coordinates
+
+## Understanding PDF Text Extraction
+
+### Why Text is Sometimes Split into Individual Characters
+
+PDF文件中的文本有时会以单个字符或小片段的形式存储，这可能导致文本提取时出现"一个字符一个框"的情况。这主要是由以下原因造成的：
+
+1. **排版效果**：PDF创建工具可能会将单词拆分成单个字符，以实现特定的字间距、对齐或视觉效果
+2. **字体优化**：为了优化存储，相同字符可能使用相同的字形引用
+3. **复杂布局**：具有特殊格式的文本（如数学公式、表格等）通常会被拆分成小片段
+4. **内容流结构**：PDF内容流中的文本操作符（如Tj/TJ）可能针对单个字符或字符组
+
+### 使用文本片段合并功能
+
+使用`--merge-fragments`选项可以合并相邻且属于同一字体的文本片段，从而解决单个字符被独立框选的问题：
+
+```bash
+# 合并文本片段提取文本
+python -m pdf_parser.example parse --input input.pdf --page 2 --merge-fragments --json
+```
+
+合并规则：
+- 只有使用相同字体的相邻文本会被合并
+- 以空格分隔的文本被视为不同的片段，不会合并
+- 合并后的文本将共享同一个坐标框，通常是第一个找到的实例的坐标

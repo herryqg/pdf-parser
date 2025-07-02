@@ -46,6 +46,8 @@ def main():
     parse_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
     parse_parser.add_argument("--json-file", "-jf", help="Save JSON results to specified file path")
     parse_parser.add_argument("--with-coordinates", "-c", action="store_true", help="Include text coordinates in output")
+    parse_parser.add_argument("--merge-fragments", "-m", action="store_true", 
+                       help="合并相邻的文本片段（解决单字符一个框的问题）")
     
     args = parser.parse_args()
     
@@ -182,7 +184,8 @@ def main():
             
             results = parse_page_text(
                 pdf_path=args.input,
-                page_num=args.page
+                page_num=args.page,
+                merge_fragments=args.merge_fragments
             )
             
             # 输出结果
@@ -243,6 +246,10 @@ def main():
                             print(f"     Font: {result['font']}")
             else:
                 print(f"❌ No text elements extracted from page {args.page+1}.")
+                
+            # 如果启用了合并片段，输出信息
+            if args.merge_fragments:
+                print(f"Text fragments merging enabled: combining adjacent text elements with same font.")
                 
         except Exception as e:
             print(f"❌ Error during parsing: {e}")
