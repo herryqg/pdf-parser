@@ -13,6 +13,7 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 - **Font Analysis**: Analyze and debug font mappings in PDF documents
 - **Flexible API**: Both functional and class-based interfaces for integration
 - **GUI Interface**: Optional graphical interface for interactive text replacement
+- **Hierarchical JSON Output**: Groups text instances in a two-level JSON structure for easy processing
 
 ## Installation
 
@@ -72,7 +73,7 @@ python -m pdf_parser.example search --input input.pdf --find "Search text" --cas
 # Get results in JSON format for further processing
 python -m pdf_parser.example search --input input.pdf --find "Search text" --json
 
-# Save JSON results to a specific file
+# Save JSON results to a specific file (in hierarchical format)
 python -m pdf_parser.example search --input input.pdf --find "Search text" --json --json-file results.json
 ```
 
@@ -88,7 +89,7 @@ python -m pdf_parser.example parse --input input.pdf --page 2 --with-coordinates
 # Get results in JSON format for further processing
 python -m pdf_parser.example parse --input input.pdf --page 2 --json
 
-# Save JSON results to a specific file
+# Save JSON results to a specific file (in hierarchical format)
 python -m pdf_parser.example parse --input input.pdf --page 2 --json --json-file parsed_page.json
 ```
 
@@ -279,3 +280,48 @@ If replacement fails:
 ## License
 
 [MIT License](LICENSE) - Feel free to use, modify, and distribute as needed.
+
+## JSON Output Format
+
+When using the `--json` option, the tool outputs a hierarchical JSON structure with text content as the primary keys, and details as a list of sub-elements:
+
+```json
+{
+  "Example text 1": [
+    {
+      "rect": {
+        "x0": 100.0,
+        "y0": 200.0,
+        "x1": 150.0,
+        "y1": 220.0
+      },
+      "font": "/F1",
+      "encoded_bytes": "736f6d652062797465732068657265"
+    },
+    {
+      "rect": {
+        "x0": 300.0,
+        "y0": 400.0,
+        "x1": 350.0,
+        "y1": 420.0
+      },
+      "font": "/F2",
+      "encoded_bytes": "6f74686572206279746573"
+    }
+  ],
+  "Example text 2": [
+    {
+      "rect": {
+        "x0": 200.0,
+        "y0": 300.0,
+        "x1": 250.0,
+        "y1": 320.0
+      },
+      "font": "/F3",
+      "encoded_bytes": "62797465732076616c756573"
+    }
+  ]
+}
+```
+
+This format groups identical text occurrences together, making it easier to process multiple instances of the same text.
