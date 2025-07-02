@@ -1,4 +1,3 @@
-
 # PDF Parser and Text Replacement Tool
 
 A powerful Python library for parsing and modifying text content in PDF files with precise character-level control. This tool allows you to replace text in PDF documents while preserving the original formatting and layout.
@@ -72,6 +71,9 @@ python -m pdf_parser.example search --input input.pdf --find "Search text" --cas
 
 # Get results in JSON format for further processing
 python -m pdf_parser.example search --input input.pdf --find "Search text" --json
+
+# Save JSON results to a specific file
+python -m pdf_parser.example search --input input.pdf --find "Search text" --json --json-file results.json
 ```
 
 #### Text Extraction (Parse)
@@ -85,6 +87,9 @@ python -m pdf_parser.example parse --input input.pdf --page 2 --with-coordinates
 
 # Get results in JSON format for further processing
 python -m pdf_parser.example parse --input input.pdf --page 2 --json
+
+# Save JSON results to a specific file
+python -m pdf_parser.example parse --input input.pdf --page 2 --json --json-file parsed_page.json
 ```
 
 ### Python API

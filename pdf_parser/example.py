@@ -37,12 +37,14 @@ def main():
     search_parser.add_argument("--page", "-p", type=int, help="Page number to search (0-based, omit to search all pages)")
     search_parser.add_argument("--case-sensitive", "-cs", action="store_true", help="Enable case-sensitive search")
     search_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
+    search_parser.add_argument("--json-file", "-jf", help="Save JSON results to specified file path")
     
     # 解析命令
     parse_parser = subparsers.add_parser("parse", help="Parse and extract all replaceable text from a PDF page")
     parse_parser.add_argument("--input", "-i", required=True, help="Input PDF file path")
     parse_parser.add_argument("--page", "-p", type=int, default=0, help="Page number (0-based, default: 0)")
     parse_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
+    parse_parser.add_argument("--json-file", "-jf", help="Save JSON results to specified file path")
     parse_parser.add_argument("--with-coordinates", "-c", action="store_true", help="Include text coordinates in output")
     
     args = parser.parse_args()
@@ -108,7 +110,25 @@ def main():
                 if args.json:
                     # JSON格式输出
                     print(json.dumps(results, indent=2))
-                    json.dump(results, open("search_results.json", "w"), indent=2)
+                    
+                    # 保存JSON到文件
+                    if args.json_file:
+                        json_file_path = args.json_file
+                        # 确保输出目录存在
+                        os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
+                    else:
+                        # 如果未指定输出文件名，使用默认文件名
+                        base_name = os.path.basename(args.input)
+                        name, _ = os.path.splitext(base_name)
+                        search_text_safe = args.find.replace(" ", "_")[:20]  # 使用搜索文本的一部分作为文件名
+                        page_str = f"_page{args.page}" if args.page is not None else ""
+                        json_file_path = f"output/{name}{page_str}_search_{search_text_safe}.json"
+                        os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        
+                    # 保存JSON到文件
+                    with open(json_file_path, "w", encoding="utf-8") as f:
+                        json.dump(results, f, indent=2, ensure_ascii=False)
+                    print(f"✅ JSON results saved to: {json_file_path}")
                 else:
                     # 友好格式输出
                     print(f"\n✅ Found {len(results)} instances of '{args.find}':")
@@ -147,6 +167,23 @@ def main():
                 if args.json:
                     # JSON格式输出
                     print(json.dumps(results, indent=2))
+                    
+                    # 保存JSON到文件
+                    if args.json_file:
+                        json_file_path = args.json_file
+                        # 确保输出目录存在
+                        os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
+                    else:
+                        # 如果未指定输出文件名，使用默认文件名
+                        base_name = os.path.basename(args.input)
+                        name, _ = os.path.splitext(base_name)
+                        json_file_path = f"output/{name}_page{args.page}_parsed.json"
+                        os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        
+                    # 保存JSON到文件
+                    with open(json_file_path, "w", encoding="utf-8") as f:
+                        json.dump(results, f, indent=2, ensure_ascii=False)
+                    print(f"✅ JSON results saved to: {json_file_path}")
                 else:
                     # 友好格式输出
                     print(f"\n✅ Extracted {len(results)} text elements from page {args.page+1} (including duplicates):")
