@@ -5,7 +5,7 @@ from .fonts.analysis import get_font_cmaps_from_reference, analyze_font_mappings
 
 def parse_page_text(pdf_path, page_num=0):
     """
-    解析PDF页面中的可替换文本并返回列表。
+    解析PDF页面中的可替换文本并返回列表，严格按照GUI中的实现逻辑。
     
     Args:
         pdf_path (str): PDF文件路径
@@ -22,32 +22,20 @@ def parse_page_text(pdf_path, page_num=0):
     results = []
     
     try:
-        # 使用PyMuPDF获取页面文本块
+        # 打开PDF文档
         doc_mupdf = fitz.open(pdf_path)
         if page_num < 0 or page_num >= len(doc_mupdf):
             raise ValueError(f"页码 {page_num} 超出范围，PDF共有 {len(doc_mupdf)} 页")
-            
+        
+        # 获取当前页面
         page = doc_mupdf[page_num]
         
-        # 1. 首先使用PyMuPDF提取文本块
-        blocks = page.get_text("blocks")
-        for block in blocks:
-            text = block[4].strip()
-            if text:
-                rect = fitz.Rect(block[:4])
-                results.append({
-                    "text": text,
-                    "rect": {
-                        "x0": rect.x0,
-                        "y0": rect.y0, 
-                        "x1": rect.x1,
-                        "y1": rect.y1
-                    },
-                    "source": "pymupdf"
-                })
+        # 收集当前页面上的可替换文本
+        # 严格按照pdf_gui.py中collect_decoded_texts()函数的逻辑
         
-        # 2. 使用pikepdf和CMap解析更精确的文本段落
+        # 1. 使用pikepdf收集内容流中的文本
         try:
+            # 打开pikepdf文档
             pdf = pikepdf.open(pdf_path)
             pikepdf_page = pdf.pages[page_num]
             
@@ -64,21 +52,38 @@ def parse_page_text(pdf_path, page_num=0):
                         cmap_str = cmap_bytes.decode('utf-8', errors='ignore')
                         font_cmap = parse_cmap(cmap_str)
                         font_cmaps[str(font_name)] = font_cmap
+                    else:
+                        # 如果没有ToUnicode映射，创建一个基础映射（与GUI逻辑保持一致）
+                        from .core.cmap import create_tounicode_cmap
+                        encoding_name = '/WinAnsiEncoding'  # 默认
+                        if "/Encoding" in font_ref:
+                            encoding = font_ref["/Encoding"]
+                            if isinstance(encoding, pikepdf.Name):
+                                encoding_name = str(encoding)
+                        
+                        # 创建CMap
+                        cmap_str = create_tounicode_cmap(font_ref, encoding_name)
+                        font_cmap = parse_cmap(cmap_str)
+                        font_cmaps[str(font_name)] = font_cmap
             
             # 解析内容流
+            content_bytes = None
             if '/Contents' in pikepdf_page:
                 content_objects = pikepdf_page['/Contents']
-                combined = b''
                 
                 if isinstance(content_objects, pikepdf.Array):
+                    content_bytes = b''
                     for obj in content_objects:
-                        combined += obj.read_bytes()
+                        content_bytes += obj.read_bytes()
                 else:
-                    combined = content_objects.read_bytes()
+                    content_bytes = content_objects.read_bytes()
+            
+            # 如果获取到内容流，解析文本
+            decoded_items = []
+            if content_bytes:
+                content_str = content_bytes.decode('latin1', errors='replace')
                 
-                content_str = combined.decode('latin1', errors='replace')
-                
-                # 解析文本操作符
+                # 解析文本操作符（与GUI逻辑一致）
                 text_pattern = re.compile(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]')
                 font_pattern = re.compile(r'/([A-Za-z0-9]+)\s+\d+\s+Tf')
                 current_font = None
@@ -97,61 +102,109 @@ def parse_page_text(pdf_path, page_num=0):
                         is_tj = match.group(0).strip().endswith('TJ')
                         inner_text = text_match.group(2) if is_tj else text_match.group(1)
                         
+                        # 处理TJ数组（与GUI逻辑一致）
+                        if is_tj:
+                            try:
+                                processed = ''
+                                for part in inner_text.split():
+                                    if part.startswith('(') and part.endswith(')'):
+                                        processed += part[1:-1]
+                                if processed:
+                                    inner_text = processed
+                            except Exception:
+                                pass
+                        
                         # 处理转义字符
                         text_content_for_decode = inner_text.replace('\\(', '(').replace('\\)', ')').replace('\\\\', '\\')
-                        encoded_bytes = text_content_for_decode.encode('latin1', errors='replace')
+                        encoded_bytes = text_content_for_decode.encode('latin1')
                         
-                        # 解码文本
-                        decoded_text = decode_pdf_string(encoded_bytes, font_cmaps[current_font])
-                        if decoded_text.strip():
-                            # 查找是否已存在相同的文本
-                            exists = False
-                            for item in results:
-                                if item["text"] == decoded_text:
-                                    exists = True
-                                    break
-                            
-                            if not exists:
-                                # 使用PyMuPDF查找文本位置
-                                text_instances = page.search_for(decoded_text)
-                                if text_instances:
-                                    rect = text_instances[0]
-                                    results.append({
-                                        "text": decoded_text,
-                                        "rect": {
-                                            "x0": rect.x0,
-                                            "y0": rect.y0,
-                                            "x1": rect.x1,
-                                            "y1": rect.y1
-                                        },
-                                        "font": current_font,
-                                        "source": "content_stream"
-                                    })
-                                else:
-                                    # 如果找不到精确位置，仍然添加文本
-                                    results.append({
-                                        "text": decoded_text,
-                                        "rect": None,
-                                        "font": current_font,
-                                        "source": "content_stream"
-                                    })
+                        try:
+                            # 使用CMap解码文本
+                            decoded_text = decode_pdf_string(encoded_bytes, font_cmaps[current_font])
+                            if decoded_text.strip():
+                                decoded_items.append((current_font, decoded_text.strip(), encoded_bytes))
+                        except Exception as e:
+                            print(f"解码文本时出错: {e}")
             
+            # 关闭pikepdf文档
             pdf.close()
             
+            # 2. 从解码项目中提取唯一文本项（与GUI的refresh_text_listbox逻辑一致）
+            found_set = set()
+            for font_name, text_str, encoded_bytes in decoded_items:
+                if text_str and text_str not in found_set:
+                    # 使用PyMuPDF搜索文本位置
+                    text_instances = page.search_for(text_str)
+                    rect = None
+                    if text_instances:
+                        # 使用第一个找到的实例位置
+                        rect = text_instances[0]
+                        rect_dict = {
+                            "x0": rect.x0,
+                            "y0": rect.y0, 
+                            "x1": rect.x1,
+                            "y1": rect.y1
+                        }
+                    
+                    # 添加到结果列表
+                    results.append({
+                        "text": text_str,
+                        "rect": rect_dict if rect else None,
+                        "font": font_name,
+                        "encoded_bytes": encoded_bytes.hex()
+                    })
+                    found_set.add(text_str)
+            
+            # 3. 如果没有找到任何文本，回退到PyMuPDF（与GUI逻辑一致）
+            if not results:
+                try:
+                    all_text = page.get_text()
+                    for line in all_text.splitlines():
+                        line = line.strip()
+                        if not line or line in found_set:
+                            continue
+                        
+                        # 尝试搜索此行文本的位置
+                        try:
+                            text_instances = page.search_for(line)
+                            if text_instances:
+                                rect = text_instances[0]
+                                results.append({
+                                    "text": line,
+                                    "rect": {
+                                        "x0": rect.x0,
+                                        "y0": rect.y0, 
+                                        "x1": rect.x1,
+                                        "y1": rect.y1
+                                    },
+                                    "source": "pymupdf_fallback"
+                                })
+                                found_set.add(line)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"PyMuPDF提取文本失败: {e}")
+                    
         except Exception as e:
-            print(f"pikepdf处理过程中出错: {e}")
-            # 继续使用PyMuPDF的结果
+            print(f"处理页面内容时出错: {e}")
+            # 如果处理失败，至少尝试返回基本的文本内容
+            try:
+                all_text = page.get_text()
+                for line in all_text.splitlines():
+                    line = line.strip()
+                    if line:
+                        results.append({
+                            "text": line,
+                            "rect": None,
+                            "source": "pymupdf_basic"
+                        })
+            except Exception:
+                pass
         
+        # 关闭PyMuPDF文档
         doc_mupdf.close()
         
-        # 移除重复项，保留最详细的记录
-        unique_texts = {}
-        for item in results:
-            text = item["text"]
-            if text not in unique_texts or (item["rect"] is not None and unique_texts[text]["rect"] is None):
-                unique_texts[text] = item
-        
-        return list(unique_texts.values())
+        return results
         
     except Exception as e:
         raise Exception(f"解析PDF页面时出错: {str(e)}")
