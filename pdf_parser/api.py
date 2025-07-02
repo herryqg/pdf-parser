@@ -129,10 +129,9 @@ def parse_page_text(pdf_path, page_num=0):
             # 关闭pikepdf文档
             pdf.close()
             
-            # 2. 从解码项目中提取唯一文本项（与GUI的refresh_text_listbox逻辑一致）
-            found_set = set()
+            # 2. 从解码项目中提取所有文本项（不再去重，按照内容流原始顺序）
             for font_name, text_str, encoded_bytes in decoded_items:
-                if text_str and text_str not in found_set:
+                if text_str:
                     # 使用PyMuPDF搜索文本位置
                     text_instances = page.search_for(text_str)
                     rect = None
@@ -146,22 +145,21 @@ def parse_page_text(pdf_path, page_num=0):
                             "y1": rect.y1
                         }
                     
-                    # 添加到结果列表
+                    # 添加到结果列表（不再使用found_set去重）
                     results.append({
                         "text": text_str,
                         "rect": rect_dict if rect else None,
                         "font": font_name,
                         "encoded_bytes": encoded_bytes.hex()
                     })
-                    found_set.add(text_str)
             
-            # 3. 如果没有找到任何文本，回退到PyMuPDF（与GUI逻辑一致）
+            # 3. 如果没有找到任何文本，回退到PyMuPDF（按顺序全部返回，不再去重）
             if not results:
                 try:
                     all_text = page.get_text()
                     for line in all_text.splitlines():
                         line = line.strip()
-                        if not line or line in found_set:
+                        if not line:
                             continue
                         
                         # 尝试搜索此行文本的位置
@@ -179,7 +177,6 @@ def parse_page_text(pdf_path, page_num=0):
                                     },
                                     "source": "pymupdf_fallback"
                                 })
-                                found_set.add(line)
                         except Exception:
                             pass
                 except Exception as e:
@@ -187,7 +184,7 @@ def parse_page_text(pdf_path, page_num=0):
                     
         except Exception as e:
             print(f"处理页面内容时出错: {e}")
-            # 如果处理失败，至少尝试返回基本的文本内容
+            # 如果处理失败，至少尝试返回基本的文本内容（保留全部条目，不去重）
             try:
                 all_text = page.get_text()
                 for line in all_text.splitlines():

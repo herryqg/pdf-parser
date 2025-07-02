@@ -148,7 +148,7 @@ def main():
                     print(json.dumps(results, indent=2))
                 else:
                     # 友好格式输出
-                    print(f"\n✅ Extracted {len(results)} text elements from page {args.page+1}:")
+                    print(f"\n✅ Extracted {len(results)} text elements from page {args.page+1} (including duplicates):")
                     for i, result in enumerate(results):
                         text = result["text"]
                         # 截取文本，避免过长
