@@ -1,175 +1,163 @@
 #!/usr/bin/env python3
-"""Example script demonstrating the PDF Parser API."""
+"""Example script for using the PDF Parser module."""
 
-import os
 import argparse
 import json
+import os
+import sys
 from pdf_parser.api import PDFTextReplacer, replace_pdf_text, search_text_in_pdf, parse_page_text
 
+
 def main():
-    parser = argparse.ArgumentParser(description="PDF Text Replacement and Search Tool")
+    """Main entry point for the example script."""
+    parser = argparse.ArgumentParser(description='PDF Parser and Text Replacement Tool')
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
     
-    # 创建子命令解析器
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    # Replace command
+    replace_parser = subparsers.add_parser('replace', help='Replace text in PDF')
+    replace_parser.add_argument('--input', '-i', required=True, help='Input PDF file')
+    replace_parser.add_argument('--output', '-o', required=True, help='Output PDF file')
+    replace_parser.add_argument('--target', '-t', required=True, help='Text to find and replace')
+    replace_parser.add_argument('--replacement', '-r', required=True, help='Replacement text')
+    replace_parser.add_argument('--page', '-p', type=int, default=0, help='Page number (0-based)')
+    replace_parser.add_argument('--instance', '-n', type=int, default=-1, help='Instance number (-1 for all)')
+    replace_parser.add_argument('--debug', '-d', action='store_true', help='Enable debug mode')
+    replace_parser.add_argument('--auto-insert', '-a', action='store_true', help='Allow auto-insertion of characters')
     
-    # 替换命令
-    replace_parser = subparsers.add_parser("replace", help="Replace text in PDF")
-    replace_parser.add_argument("--input", "-i", required=True, help="Input PDF file path")
-    replace_parser.add_argument("--output", "-o", help="Output PDF file path (default: auto-generated)")
-    replace_parser.add_argument("--find", "-f", required=True, help="Text to find")
-    replace_parser.add_argument("--replace", "-r", required=True, help="Text to replace with")
-    replace_parser.add_argument("--page", "-p", type=int, default=0, help="Page number (0-based, default: 0)")
-    replace_parser.add_argument("--instance", "-ist", type=int, default=-1, 
-                       help="Specific text instance to replace (-1 for all instances, default: -1)")
-    replace_parser.add_argument("--analyze", action="store_true", 
-                       help="Analyze font mappings in the PDF")
-    replace_parser.add_argument("--debug", action="store_true", 
-                       help="Enable debug output")
-    replace_parser.add_argument("--allow-auto-insert", action="store_true",
-                       help="Allow automatic insertion of characters not present in the font")
-    replace_parser.add_argument("--verbose", "-v", type=int, choices=[0, 1, 2, 3], default=1,
-                       help="Verbosity level (0=errors only, 1=standard, 2=detailed, 3=debug)")
+    # Search command
+    search_parser = subparsers.add_parser('search', help='Search text in PDF')
+    search_parser.add_argument('--input', '-i', required=True, help='Input PDF file')
+    search_parser.add_argument('--text', '-t', required=True, help='Text to search for')
+    search_parser.add_argument('--page', '-p', type=int, default=None, help='Page number (0-based), omit to search all pages')
+    search_parser.add_argument('--case-sensitive', '-c', action='store_true', help='Case sensitive search')
+    search_parser.add_argument('--json', '-j', action='store_true', help='Output in JSON format')
     
-    # 搜索命令
-    search_parser = subparsers.add_parser("search", help="Search text in PDF")
-    search_parser.add_argument("--input", "-i", required=True, help="Input PDF file path")
-    search_parser.add_argument("--find", "-f", required=True, help="Text to search for")
-    search_parser.add_argument("--page", "-p", type=int, help="Page number to search (0-based, omit to search all pages)")
-    search_parser.add_argument("--case-sensitive", "-cs", action="store_true", help="Enable case-sensitive search")
-    search_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
-    
-    # 解析命令
-    parse_parser = subparsers.add_parser("parse", help="Parse and extract all replaceable text from a PDF page")
-    parse_parser.add_argument("--input", "-i", required=True, help="Input PDF file path")
-    parse_parser.add_argument("--page", "-p", type=int, default=0, help="Page number (0-based, default: 0)")
-    parse_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
-    parse_parser.add_argument("--with-coordinates", "-c", action="store_true", help="Include text coordinates in output")
+    # Parse command
+    parse_parser = subparsers.add_parser('parse', help='Parse text from PDF page')
+    parse_parser.add_argument('--input', '-i', required=True, help='Input PDF file')
+    parse_parser.add_argument('--page', '-p', type=int, default=0, help='Page number (0-based)')
+    parse_parser.add_argument('--json', '-j', action='store_true', help='Output in JSON format')
+    parse_parser.add_argument('--all-instances', '-a', action='store_true', help='Include all instances of each text')
     
     args = parser.parse_args()
     
-    # 如果没有指定命令，默认为替换命令
-    if not args.command:
-        args.command = "replace"
-    
-    # 处理替换命令
-    if args.command == "replace":
-        # Generate default output path if not provided
-        if not args.output:
-            base_name = os.path.basename(args.input)
-            name, ext = os.path.splitext(base_name)
-            args.output = f"output/{name}_replaced{ext}"
+    if args.command == 'replace':
+        # Check if input file exists
+        if not os.path.isfile(args.input):
+            print(f"Error: Input file '{args.input}' not found.")
+            return 1
             
         # Create output directory if it doesn't exist
-        os.makedirs(os.path.dirname(args.output), exist_ok=True)
-        
-        # Example 1: Using the function directly
-        print(f"Replacing '{args.find}' with '{args.replace}' on page {args.page+1}...")
+        output_dir = os.path.dirname(args.output)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            
+        # Execute replacement
         success = replace_pdf_text(
             input_pdf=args.input,
             output_pdf=args.output,
-            target_text=args.find,
-            replacement_text=args.replace,
+            target_text=args.target,
+            replacement_text=args.replacement,
             page_num=args.page,
             instance_index=args.instance,
             debug=args.debug,
-            allow_auto_insert=args.allow_auto_insert,
-            verbose=args.verbose
+            allow_auto_insert=args.auto_insert
         )
         
         if success:
-            print(f"✅ Replacement successful! Output saved to: {args.output}")
+            print(f"Text successfully replaced. Output saved to '{args.output}'.")
+            return 0
         else:
-            print(f"❌ Replacement failed or nothing was replaced.")
+            print("Text replacement failed.")
+            return 1
+            
+    elif args.command == 'search':
+        # Check if input file exists
+        if not os.path.isfile(args.input):
+            print(f"Error: Input file '{args.input}' not found.")
+            return 1
+            
+        # Execute search
+        results = search_text_in_pdf(
+            pdf_path=args.input,
+            search_text=args.text,
+            page_num=args.page,
+            case_sensitive=args.case_sensitive
+        )
         
-        # Example 2: Using the class-based API for additional operations
-        if args.analyze:
-            print("\nAnalyzing PDF font mappings...")
-            analyzer = PDFTextReplacer(debug=args.debug, verbose=args.verbose)
-            analyzer.analyze_fonts(args.input)
-            print("✅ Font analysis complete. Results saved to output/font_mapping_analysis.txt")
-    
-    # 处理搜索命令
-    elif args.command == "search":
-        try:
-            # 执行搜索
-            print(f"Searching for '{args.find}' in {args.input}...")
-            if args.page is not None:
-                print(f"Searching only on page {args.page+1}")
-                
-            results = search_text_in_pdf(
-                pdf_path=args.input, 
-                search_text=args.find, 
-                page_num=args.page,
-                case_sensitive=args.case_sensitive
-            )
-            
-            # 输出结果
-            if results:
-                if args.json:
-                    # JSON格式输出
-                    print(json.dumps(results, indent=2))
-                else:
-                    # 友好格式输出
-                    print(f"\n✅ Found {len(results)} instances of '{args.find}':")
-                    for i, result in enumerate(results):
-                        page = result["page"] + 1  # 转为1-based页码
-                        context = result["context"].strip().replace("\n", " ")
-                        # 截取上下文，避免过长
-                        max_context = 100
-                        if len(context) > max_context:
-                            context = context[:max_context] + "..."
-                        print(f"  {i+1}. Page {page}: {context}")
-                        
-                        # 输出坐标信息
-                        if "rect" in result:
-                            rect = result["rect"]
-                            print(f"     Position: x0={rect['x0']:.2f}, y0={rect['y0']:.2f}, x1={rect['x1']:.2f}, y1={rect['y1']:.2f}")
+        if args.json:
+            # Output as JSON
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        else:
+            # Pretty print results
+            if not results:
+                print(f"Text '{args.text}' not found in the document.")
             else:
-                print(f"❌ No occurrences of '{args.find}' found.")
-                
-        except Exception as e:
-            print(f"❌ Error during search: {e}")
+                print(f"Found {len(results)} occurrences of '{args.text}':")
+                for idx, result in enumerate(results, 1):
+                    page = result['page'] + 1  # Convert to 1-based for display
+                    rect = result['rect']
+                    print(f"{idx}. Page {page}, Position: ({rect['x0']:.2f}, {rect['y0']:.2f}) - ({rect['x1']:.2f}, {rect['y1']:.2f})")
+                    if 'context' in result and result['context']:
+                        context = result['context'].replace('\n', ' ')
+                        if len(context) > 100:
+                            context = context[:97] + '...'
+                        print(f"   Context: \"{context}\"")
+                    print()
+        
+        return 0
+        
+    elif args.command == 'parse':
+        # Check if input file exists
+        if not os.path.isfile(args.input):
+            print(f"Error: Input file '{args.input}' not found.")
+            return 1
             
-    # 处理解析命令
-    elif args.command == "parse":
-        try:
-            # 执行页面解析
-            print(f"Parsing text from page {args.page+1} in {args.input}...")
-            
-            results = parse_page_text(
-                pdf_path=args.input,
-                page_num=args.page
-            )
-            
-            # 输出结果
-            if results:
-                if args.json:
-                    # JSON格式输出
-                    print(json.dumps(results, indent=2))
-                else:
-                    # 友好格式输出
-                    print(f"\n✅ Extracted {len(results)} text elements from page {args.page+1}:")
-                    for i, result in enumerate(results):
-                        text = result["text"]
-                        # 截取文本，避免过长
-                        max_text = 100
-                        if len(text) > max_text:
-                            text = text[:max_text] + "..."
-                        print(f"  {i+1}. {text}")
-                        
-                        # 如果指定了输出坐标
-                        if args.with_coordinates and "rect" in result and result["rect"]:
-                            rect = result["rect"]
-                            print(f"     Position: x0={rect['x0']:.2f}, y0={rect['y0']:.2f}, x1={rect['x1']:.2f}, y1={rect['y1']:.2f}")
-                        
-                        # 如果有字体信息，则输出
-                        if "font" in result:
-                            print(f"     Font: {result['font']}")
+        # Execute parse
+        results = parse_page_text(
+            pdf_path=args.input,
+            page_num=args.page,
+            include_all_instances=args.all_instances
+        )
+        
+        if args.json:
+            # Output as JSON
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        else:
+            # Pretty print results
+            if not results:
+                print(f"No text found on page {args.page+1}.")
             else:
-                print(f"❌ No text elements extracted from page {args.page+1}.")
-                
-        except Exception as e:
-            print(f"❌ Error during parsing: {e}")
+                print(f"Found {len(results)} text elements on page {args.page+1}:")
+                for idx, result in enumerate(results, 1):
+                    text = result['text']
+                    
+                    if args.all_instances and 'instances' in result:
+                        instance_count = len(result['instances'])
+                        print(f"{idx}. \"{text}\" ({instance_count} instances)")
+                        
+                        # 打印每个实例的位置
+                        for i, rect in enumerate(result['instances'], 1):
+                            if rect:
+                                print(f"   Instance {i}: ({rect['x0']:.2f}, {rect['y0']:.2f}) - ({rect['x1']:.2f}, {rect['y1']:.2f})")
+                    else:
+                        rect = result.get('rect')
+                        if rect:
+                            print(f"{idx}. \"{text}\" at ({rect['x0']:.2f}, {rect['y0']:.2f}) - ({rect['x1']:.2f}, {rect['y1']:.2f})")
+                        else:
+                            print(f"{idx}. \"{text}\" (position unknown)")
+                    
+                    if 'font' in result:
+                        print(f"   Font: {result['font']}")
+                    
+                    print()
+        
+        return 0
+        
+    else:
+        parser.print_help()
+        return 1
 
-if __name__ == "__main__":
-    main() 
+
+if __name__ == '__main__':
+    sys.exit(main()) 
