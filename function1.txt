@@ -1,0 +1,21 @@
+def print_character_stream_mapping(text, encoded_bytes, font_cmap, log_list=None, debug=False):
+    """
+    Print mapping between characters and their stream encodings.
+    
+    Args:
+        text: The Unicode text
+        encoded_bytes: The encoded bytes in the PDF stream
+        font_cmap: Font CMap mapping dictionary
+        log_list: List to append log messages
+        debug: Whether to enable detailed debug output
+    """
+    msg = []
+    for i, char in enumerate(text):
+        if i < len(encoded_bytes):
+            code = encoded_bytes[i]
+            byte_repr = f"{code:02X}"
+            msg.append(f"  '{char}' → {byte_repr}")
+        
+    if log_list is not None:
+        log_list.append("\n".join(msg))
+    elif debug:

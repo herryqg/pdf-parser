@@ -297,8 +297,8 @@ def print_character_stream_mapping(text, encoded_bytes, font_cmap, log_list=None
             byte_repr = f"{code:02X}"
             msg.append(f"  '{char}' → {byte_repr}")
         
-        if log_list is not None:
-        log_list.append("\n".join(msg))
+    if log_list is not None:
+            log_list.append("\n".join(msg))
     elif debug:
         print("\n".join(msg))
 
@@ -324,7 +324,7 @@ def print_rendering_mapping(font_ref, char, byte_code, log_list=None, debug=Fals
             encoding_name = str(font_ref["/Encoding"])
         msg.append(f"  Encoding: {encoding_name}")
         
-        if log_list is not None:
+    if log_list is not None:
         log_list.append("\n".join(msg))
     elif debug:
-        print("\n".join(msg)) 
+            print("\n".join(msg)) 
