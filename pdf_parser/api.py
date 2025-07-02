@@ -18,6 +18,8 @@ def parse_page_text(pdf_path, page_num=0):
         - 提取文本时会过滤掉被其他文本框完全包含的文本框
         - 文本框按面积从大到小排序，较小的文本框如果完全位于较大文本框内则被过滤
         - 相同文本的不同实例会根据其在文档中的顺序获得正确的坐标
+        - 坐标匹配使用前向匹配：对于内容流中的文本实例，只匹配尚未处理过的页面位置
+        - 使用位置哈希确保每个文本实例都匹配到不同的页面位置，避免重复匹配
     """
     import fitz  # PyMuPDF
     import pikepdf
@@ -138,11 +140,15 @@ def parse_page_text(pdf_path, page_num=0):
             # 跟踪已处理的文本实例数量
             text_instance_counts = {}
             
+            # 跟踪已处理位置的文本实例
+            processed_positions = {}
+            
             for font_name, text_str, encoded_bytes in decoded_items:
                 if text_str:
                     # 初始化计数器（如果不存在）
                     if text_str not in text_instance_counts:
                         text_instance_counts[text_str] = 0
+                        processed_positions[text_str] = set()
                     
                     current_instance_index = text_instance_counts[text_str]
                     text_instance_counts[text_str] += 1
@@ -151,10 +157,21 @@ def parse_page_text(pdf_path, page_num=0):
                     text_instances = page.search_for(text_str)
                     rect = None
                     
-                    # 确保找到了足够的实例
-                    if text_instances and current_instance_index < len(text_instances):
-                        # 使用对应的实例位置（按顺序）
-                        rect = text_instances[current_instance_index]
+                    # 过滤掉已处理过的位置
+                    available_instances = []
+                    for instance in text_instances:
+                        # 使用矩形的哈希作为唯一标识
+                        pos_hash = (round(instance.x0), round(instance.y0), 
+                                   round(instance.x1), round(instance.y1))
+                        if pos_hash not in processed_positions[text_str]:
+                            available_instances.append((instance, pos_hash))
+                    
+                    # 确保找到了未处理过的实例
+                    if available_instances:
+                        # 使用第一个未处理的实例
+                        rect, pos_hash = available_instances[0]
+                        # 标记此位置已处理
+                        processed_positions[text_str].add(pos_hash)
                         rect_dict = {
                             "x0": rect.x0,
                             "y0": rect.y0, 
@@ -162,7 +179,7 @@ def parse_page_text(pdf_path, page_num=0):
                             "y1": rect.y1
                         }
                     elif text_instances:
-                        # 如果实例数量不足但至少有一个，使用第一个
+                        # 如果所有实例都已处理，但仍然需要一个位置（这种情况不应该发生）
                         rect = text_instances[0]
                         rect_dict = {
                             "x0": rect.x0,
@@ -170,6 +187,8 @@ def parse_page_text(pdf_path, page_num=0):
                             "x1": rect.x1,
                             "y1": rect.y1
                         }
+                        # 添加警告标记
+                        log_warning = "警告：内容流中有更多实例，但页面上没有足够的匹配文本"
                     
                     # 添加到结果列表
                     results.append({
@@ -185,6 +204,7 @@ def parse_page_text(pdf_path, page_num=0):
                 try:
                     all_text = page.get_text()
                     text_instance_counts = {}
+                    processed_positions = {}
                     
                     for line in all_text.splitlines():
                         line = line.strip()
@@ -194,17 +214,30 @@ def parse_page_text(pdf_path, page_num=0):
                         # 初始化计数器（如果不存在）
                         if line not in text_instance_counts:
                             text_instance_counts[line] = 0
+                            processed_positions[line] = set()
                         
                         current_instance_index = text_instance_counts[line]
                         text_instance_counts[line] += 1
                         
-                        # 尝试搜索此行文本的位置
+                        # 尝试搜索位置信息
                         try:
                             text_instances = page.search_for(line)
+                            rect = None
                             
-                            if text_instances and current_instance_index < len(text_instances):
-                                # 使用对应的实例位置
-                                rect = text_instances[current_instance_index]
+                            # 过滤掉已处理过的位置
+                            available_instances = []
+                            for instance in text_instances:
+                                # 使用矩形的哈希作为唯一标识
+                                pos_hash = (round(instance.x0), round(instance.y0), 
+                                           round(instance.x1), round(instance.y1))
+                                if pos_hash not in processed_positions[line]:
+                                    available_instances.append((instance, pos_hash))
+                            
+                            if available_instances:
+                                # 使用第一个未处理的实例
+                                rect, pos_hash = available_instances[0]
+                                # 标记此位置已处理
+                                processed_positions[line].add(pos_hash)
                                 results.append({
                                     "text": line,
                                     "rect": {
@@ -213,39 +246,24 @@ def parse_page_text(pdf_path, page_num=0):
                                         "x1": rect.x1,
                                         "y1": rect.y1
                                     },
-                                    "source": "pymupdf_fallback",
+                                    "source": "pymupdf_basic",
                                     "instance_index": current_instance_index
                                 })
-                            elif text_instances:
-                                # 如果实例数量不足但至少有一个
-                                rect = text_instances[0]
-                                results.append({
-                                    "text": line,
-                                    "rect": {
-                                        "x0": rect.x0,
-                                        "y0": rect.y0, 
-                                        "x1": rect.x1,
-                                        "y1": rect.y1
-                                    },
-                                    "source": "pymupdf_fallback",
-                                    "instance_index": current_instance_index,
-                                    "note": "instance index mismatch - not enough instances found"
-                                })
                             else:
-                                # 没有找到位置信息
+                                # 无法获得位置或所有位置已处理
                                 results.append({
                                     "text": line,
                                     "rect": None,
-                                    "source": "pymupdf_fallback",
+                                    "source": "pymupdf_basic",
                                     "instance_index": current_instance_index
                                 })
-                        except Exception as e:
+                        except Exception:
+                            # 搜索失败，返回无位置信息
                             results.append({
                                 "text": line,
                                 "rect": None,
-                                "source": "pymupdf_fallback",
-                                "instance_index": current_instance_index,
-                                "error": str(e)
+                                "source": "pymupdf_basic",
+                                "instance_index": current_instance_index
                             })
                 except Exception as e:
                     print(f"PyMuPDF提取文本失败: {e}")
@@ -256,6 +274,7 @@ def parse_page_text(pdf_path, page_num=0):
             try:
                 all_text = page.get_text()
                 text_instance_counts = {}
+                processed_positions = {}
                 
                 for line in all_text.splitlines():
                     line = line.strip()
@@ -263,16 +282,57 @@ def parse_page_text(pdf_path, page_num=0):
                         # 初始化计数器（如果不存在）
                         if line not in text_instance_counts:
                             text_instance_counts[line] = 0
+                            processed_positions[line] = set()
                         
                         current_instance_index = text_instance_counts[line]
                         text_instance_counts[line] += 1
                         
-                        results.append({
-                            "text": line,
-                            "rect": None,
-                            "source": "pymupdf_basic",
-                            "instance_index": current_instance_index
-                        })
+                        # 尝试搜索位置信息
+                        try:
+                            text_instances = page.search_for(line)
+                            rect = None
+                            
+                            # 过滤掉已处理过的位置
+                            available_instances = []
+                            for instance in text_instances:
+                                # 使用矩形的哈希作为唯一标识
+                                pos_hash = (round(instance.x0), round(instance.y0), 
+                                           round(instance.x1), round(instance.y1))
+                                if pos_hash not in processed_positions[line]:
+                                    available_instances.append((instance, pos_hash))
+                            
+                            if available_instances:
+                                # 使用第一个未处理的实例
+                                rect, pos_hash = available_instances[0]
+                                # 标记此位置已处理
+                                processed_positions[line].add(pos_hash)
+                                results.append({
+                                    "text": line,
+                                    "rect": {
+                                        "x0": rect.x0,
+                                        "y0": rect.y0, 
+                                        "x1": rect.x1,
+                                        "y1": rect.y1
+                                    },
+                                    "source": "pymupdf_basic",
+                                    "instance_index": current_instance_index
+                                })
+                            else:
+                                # 无法获得位置或所有位置已处理
+                                results.append({
+                                    "text": line,
+                                    "rect": None,
+                                    "source": "pymupdf_basic",
+                                    "instance_index": current_instance_index
+                                })
+                        except Exception:
+                            # 搜索失败，返回无位置信息
+                            results.append({
+                                "text": line,
+                                "rect": None,
+                                "source": "pymupdf_basic",
+                                "instance_index": current_instance_index
+                            })
             except Exception:
                 pass
         

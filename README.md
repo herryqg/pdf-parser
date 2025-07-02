@@ -335,3 +335,4 @@ This format groups identical text occurrences together, making it easier to proc
 - Coordinates (`rect`) are matched with text instances in the correct order
 - Multiple occurrences of identical text (like "40V5C") each get their own accurate coordinates
 - Nested text boxes are filtered out - smaller text boxes completely contained within larger ones are removed
+- Forward-only coordinate matching ensures each text instance only matches with unprocessed positions in the document
