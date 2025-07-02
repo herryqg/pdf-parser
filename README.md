@@ -296,7 +296,8 @@ When using the `--json` option, the tool outputs a hierarchical JSON structure w
         "y1": 220.0
       },
       "font": "/F1",
-      "encoded_bytes": "736f6d652062797465732068657265"
+      "encoded_bytes": "736f6d652062797465732068657265",
+      "instance_index": 0
     },
     {
       "rect": {
@@ -306,7 +307,8 @@ When using the `--json` option, the tool outputs a hierarchical JSON structure w
         "y1": 420.0
       },
       "font": "/F2",
-      "encoded_bytes": "6f74686572206279746573"
+      "encoded_bytes": "6f74686572206279746573",
+      "instance_index": 1
     }
   ],
   "Example text 2": [
@@ -318,10 +320,16 @@ When using the `--json` option, the tool outputs a hierarchical JSON structure w
         "y1": 320.0
       },
       "font": "/F3",
-      "encoded_bytes": "62797465732076616c756573"
+      "encoded_bytes": "62797465732076616c756573",
+      "instance_index": 0
     }
   ]
 }
 ```
 
-This format groups identical text occurrences together, making it easier to process multiple instances of the same text.
+This format groups identical text occurrences together, making it easier to process multiple instances of the same text. Key features:
+
+- Each identical text instance has its own entry with unique coordinates
+- The `instance_index` field tracks the occurrence order in the document
+- Coordinates (`rect`) are matched with text instances in the correct order
+- Multiple occurrences of identical text (like "40V5C") each get their own accurate coordinates

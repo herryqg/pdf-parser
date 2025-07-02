@@ -130,13 +130,34 @@ def parse_page_text(pdf_path, page_num=0):
             pdf.close()
             
             # 2. 从解码项目中提取所有文本项（不再去重，按照内容流原始顺序）
+            # 跟踪已处理的文本实例数量
+            text_instance_counts = {}
+            
             for font_name, text_str, encoded_bytes in decoded_items:
                 if text_str:
+                    # 初始化计数器（如果不存在）
+                    if text_str not in text_instance_counts:
+                        text_instance_counts[text_str] = 0
+                    
+                    current_instance_index = text_instance_counts[text_str]
+                    text_instance_counts[text_str] += 1
+                    
                     # 使用PyMuPDF搜索文本位置
                     text_instances = page.search_for(text_str)
                     rect = None
-                    if text_instances:
-                        # 使用第一个找到的实例位置
+                    
+                    # 确保找到了足够的实例
+                    if text_instances and current_instance_index < len(text_instances):
+                        # 使用对应的实例位置（按顺序）
+                        rect = text_instances[current_instance_index]
+                        rect_dict = {
+                            "x0": rect.x0,
+                            "y0": rect.y0, 
+                            "x1": rect.x1,
+                            "y1": rect.y1
+                        }
+                    elif text_instances:
+                        # 如果实例数量不足但至少有一个，使用第一个
                         rect = text_instances[0]
                         rect_dict = {
                             "x0": rect.x0,
@@ -145,27 +166,53 @@ def parse_page_text(pdf_path, page_num=0):
                             "y1": rect.y1
                         }
                     
-                    # 添加到结果列表（不再使用found_set去重）
+                    # 添加到结果列表
                     results.append({
                         "text": text_str,
                         "rect": rect_dict if rect else None,
                         "font": font_name,
-                        "encoded_bytes": encoded_bytes.hex()
+                        "encoded_bytes": encoded_bytes.hex(),
+                        "instance_index": current_instance_index  # 添加实例索引以便追踪
                     })
             
             # 3. 如果没有找到任何文本，回退到PyMuPDF（按顺序全部返回，不再去重）
             if not results:
                 try:
                     all_text = page.get_text()
+                    text_instance_counts = {}
+                    
                     for line in all_text.splitlines():
                         line = line.strip()
                         if not line:
                             continue
                         
+                        # 初始化计数器（如果不存在）
+                        if line not in text_instance_counts:
+                            text_instance_counts[line] = 0
+                        
+                        current_instance_index = text_instance_counts[line]
+                        text_instance_counts[line] += 1
+                        
                         # 尝试搜索此行文本的位置
                         try:
                             text_instances = page.search_for(line)
-                            if text_instances:
+                            
+                            if text_instances and current_instance_index < len(text_instances):
+                                # 使用对应的实例位置
+                                rect = text_instances[current_instance_index]
+                                results.append({
+                                    "text": line,
+                                    "rect": {
+                                        "x0": rect.x0,
+                                        "y0": rect.y0, 
+                                        "x1": rect.x1,
+                                        "y1": rect.y1
+                                    },
+                                    "source": "pymupdf_fallback",
+                                    "instance_index": current_instance_index
+                                })
+                            elif text_instances:
+                                # 如果实例数量不足但至少有一个
                                 rect = text_instances[0]
                                 results.append({
                                     "text": line,
@@ -175,10 +222,26 @@ def parse_page_text(pdf_path, page_num=0):
                                         "x1": rect.x1,
                                         "y1": rect.y1
                                     },
-                                    "source": "pymupdf_fallback"
+                                    "source": "pymupdf_fallback",
+                                    "instance_index": current_instance_index,
+                                    "note": "instance index mismatch - not enough instances found"
                                 })
-                        except Exception:
-                            pass
+                            else:
+                                # 没有找到位置信息
+                                results.append({
+                                    "text": line,
+                                    "rect": None,
+                                    "source": "pymupdf_fallback",
+                                    "instance_index": current_instance_index
+                                })
+                        except Exception as e:
+                            results.append({
+                                "text": line,
+                                "rect": None,
+                                "source": "pymupdf_fallback",
+                                "instance_index": current_instance_index,
+                                "error": str(e)
+                            })
                 except Exception as e:
                     print(f"PyMuPDF提取文本失败: {e}")
                     
@@ -187,13 +250,23 @@ def parse_page_text(pdf_path, page_num=0):
             # 如果处理失败，至少尝试返回基本的文本内容（保留全部条目，不去重）
             try:
                 all_text = page.get_text()
+                text_instance_counts = {}
+                
                 for line in all_text.splitlines():
                     line = line.strip()
                     if line:
+                        # 初始化计数器（如果不存在）
+                        if line not in text_instance_counts:
+                            text_instance_counts[line] = 0
+                        
+                        current_instance_index = text_instance_counts[line]
+                        text_instance_counts[line] += 1
+                        
                         results.append({
                             "text": line,
                             "rect": None,
-                            "source": "pymupdf_basic"
+                            "source": "pymupdf_basic",
+                            "instance_index": current_instance_index
                         })
             except Exception:
                 pass
