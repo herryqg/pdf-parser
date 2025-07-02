@@ -14,7 +14,6 @@ A powerful Python library for parsing and modifying text content in PDF files wi
 - **Flexible API**: Both functional and class-based interfaces for integration
 - **GUI Interface**: Optional graphical interface for interactive text replacement
 - **Hierarchical JSON Output**: Groups text instances in a two-level JSON structure for easy processing
-- **Smart Bounding Box Filtering**: Automatically removes smaller boxes contained within larger ones for the same text
 
 ## Installation
 
@@ -334,19 +333,3 @@ This format groups identical text occurrences together, making it easier to proc
 - The `instance_index` field tracks the occurrence order in the document
 - Coordinates (`rect`) are matched with text instances in the correct order
 - Multiple occurrences of identical text (like "40V5C") each get their own accurate coordinates
-- Small bounding boxes contained within larger ones for the same text are automatically filtered out
-
-## Bounding Box Filtering
-
-PDFs sometimes render text in different ways:
-
-1. **Complete words/sentences** - Text appears as a single element with one bounding box
-2. **Character-by-character** - Each character has its own bounding box
-
-When a PDF uses both methods, this can result in overlapping bounding boxes. For example:
-- A single bounding box might contain "Hello World"
-- Individual characters "H", "e", "l", "l", "o", etc. might each have their own smaller boxes
-
-The tool automatically detects and filters out these smaller contained boxes, preventing duplicates and ensuring cleaner results when:
-- A box is fully contained within a larger one
-- Both boxes represent the same text content

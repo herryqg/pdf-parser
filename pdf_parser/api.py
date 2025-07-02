@@ -21,37 +21,6 @@ def parse_page_text(pdf_path, page_num=0):
     
     results = []
     
-    # 辅助函数：检查一个矩形是否被另一个矩形包含
-    def is_contained(rect1, rect2, tolerance=0.1):
-        """
-        检查rect1是否被rect2包含
-        
-        Args:
-            rect1: 第一个矩形 {"x0", "y0", "x1", "y1"}
-            rect2: 第二个矩形 {"x0", "y0", "x1", "y1"}
-            tolerance: 容差值
-            
-        Returns:
-            bool: 如果rect1被rect2包含则返回True
-        """
-        if rect1 is None or rect2 is None:
-            return False
-            
-        # 检查rect1是否在rect2内部（考虑一定的容差）
-        return (rect1["x0"] >= rect2["x0"] - tolerance and
-                rect1["y0"] >= rect2["y0"] - tolerance and
-                rect1["x1"] <= rect2["x1"] + tolerance and
-                rect1["y1"] <= rect2["y1"] + tolerance and
-                # 确保不是同一个矩形
-                (rect1["x0"] != rect2["x0"] or rect1["y0"] != rect2["y0"] or 
-                 rect1["x1"] != rect2["x1"] or rect1["y1"] != rect2["y1"]))
-    
-    # 辅助函数：计算矩形面积
-    def rect_area(rect):
-        if rect is None:
-            return 0
-        return (rect["x1"] - rect["x0"]) * (rect["y1"] - rect["y0"])
-        
     try:
         # 打开PDF文档
         doc_mupdf = fitz.open(pdf_path)
@@ -305,58 +274,7 @@ def parse_page_text(pdf_path, page_num=0):
         # 关闭PyMuPDF文档
         doc_mupdf.close()
         
-        # 过滤结果，移除被其他框包含的小框
-        filtered_results = []
-        text_groups = {}
-        
-        # 按文本分组
-        for item in results:
-            text = item["text"]
-            if text not in text_groups:
-                text_groups[text] = []
-            text_groups[text].append(item)
-        
-        # 处理每个文本组
-        for text, items in text_groups.items():
-            # 如果只有一个实例，直接添加
-            if len(items) <= 1:
-                filtered_results.extend(items)
-                continue
-                
-            # 按矩形面积从大到小排序
-            items_with_area = [(item, rect_area(item.get("rect"))) for item in items]
-            sorted_items = [item for item, area in sorted(items_with_area, key=lambda x: x[1], reverse=True)]
-            
-            # 标记要保留的项
-            to_keep = [True] * len(sorted_items)
-            
-            # 检查每一项是否被其他项包含
-            for i in range(len(sorted_items)):
-                if not to_keep[i]:  # 如果已经被标记为删除，跳过
-                    continue
-                    
-                rect_i = sorted_items[i].get("rect")
-                if rect_i is None:
-                    continue
-                    
-                for j in range(i+1, len(sorted_items)):
-                    if not to_keep[j]:  # 如果已经被标记为删除，跳过
-                        continue
-                        
-                    rect_j = sorted_items[j].get("rect")
-                    if rect_j is None:
-                        continue
-                        
-                    # 如果rect_j被rect_i包含，则标记rect_j为删除
-                    if is_contained(rect_j, rect_i):
-                        to_keep[j] = False
-            
-            # 只保留未被标记为删除的项
-            for i, item in enumerate(sorted_items):
-                if to_keep[i]:
-                    filtered_results.append(item)
-        
-        return filtered_results
+        return results
         
     except Exception as e:
         raise Exception(f"解析PDF页面时出错: {str(e)}")
@@ -379,36 +297,6 @@ def search_text_in_pdf(pdf_path, search_text, page_num=None, case_sensitive=Fals
     results = []
     flags = 0 if case_sensitive else fitz.TEXT_PRESERVE_WHITESPACE
     
-    # 辅助函数：检查一个矩形是否被另一个矩形包含
-    def is_contained(rect1, rect2, tolerance=0.1):
-        """检查rect1是否被rect2包含"""
-        if rect1 is None or rect2 is None:
-            return False
-            
-        # 解包rect1和rect2
-        r1 = fitz.Rect(rect1["x0"], rect1["y0"], rect1["x1"], rect1["y1"])
-        r2 = fitz.Rect(rect2["x0"], rect2["y0"], rect2["x1"], rect2["y1"])
-        
-        # 检查r1是否在r2内部（考虑一定的容差）
-        is_contained = (r1.x0 >= r2.x0 - tolerance and
-                        r1.y0 >= r2.y0 - tolerance and
-                        r1.x1 <= r2.x1 + tolerance and
-                        r1.y1 <= r2.y1 + tolerance)
-                        
-        # 确保不是同一个矩形
-        is_different = (abs(r1.x0 - r2.x0) > 1e-6 or
-                       abs(r1.y0 - r2.y0) > 1e-6 or
-                       abs(r1.x1 - r2.x1) > 1e-6 or
-                       abs(r1.y1 - r2.y1) > 1e-6)
-                       
-        return is_contained and is_different
-    
-    # 辅助函数：计算矩形面积
-    def rect_area(rect):
-        if rect is None:
-            return 0
-        return (rect["x1"] - rect["x0"]) * (rect["y1"] - rect["y0"])
-    
     try:
         doc = fitz.open(pdf_path)
         
@@ -420,9 +308,7 @@ def search_text_in_pdf(pdf_path, search_text, page_num=None, case_sensitive=Fals
                 raise ValueError(f"页码 {page_num} 超出范围，PDF共有 {len(doc)} 页")
         else:
             pages_to_search = range(len(doc))
-        
-        all_results = []
-        
+            
         # 搜索每一页
         for page_idx in pages_to_search:
             page = doc[page_idx]
@@ -470,66 +356,16 @@ def search_text_in_pdf(pdf_path, search_text, page_num=None, case_sensitive=Fals
                     },
                     "text": search_text,
                     "context": context_text,
-                    "block_order": containing_block if containing_block is not None else -1,
-                    "instance_index": idx  # 添加实例索引
+                    "block_order": containing_block if containing_block is not None else -1
                 }
                 page_results.append(result)
             
             # 按照文本块顺序排序结果
             page_results.sort(key=lambda x: x["block_order"])
-            all_results.extend(page_results)
+            results.extend(page_results)
         
         doc.close()
-        
-        # 过滤结果，移除被其他框包含的小框
-        filtered_results = []
-        
-        # 按页面分组
-        page_groups = {}
-        for item in all_results:
-            page = item["page"]
-            if page not in page_groups:
-                page_groups[page] = []
-            page_groups[page].append(item)
-        
-        # 在每个页面内过滤
-        for page, items in page_groups.items():
-            # 按矩形面积从大到小排序
-            items_with_area = [(item, rect_area(item.get("rect"))) for item in items]
-            sorted_items = [item for item, area in sorted(items_with_area, key=lambda x: x[1], reverse=True)]
-            
-            # 标记要保留的项
-            to_keep = [True] * len(sorted_items)
-            
-            # 检查每一项是否被其他项包含
-            for i in range(len(sorted_items)):
-                if not to_keep[i]:  # 如果已经被标记为删除，跳过
-                    continue
-                    
-                rect_i = sorted_items[i].get("rect")
-                if rect_i is None:
-                    continue
-                    
-                for j in range(len(sorted_items)):
-                    if i == j or not to_keep[j]:  # 跳过自己或已标记删除的
-                        continue
-                        
-                    rect_j = sorted_items[j].get("rect")
-                    if rect_j is None:
-                        continue
-                        
-                    # 如果rect_j被rect_i包含，则标记rect_j为删除
-                    if is_contained(rect_j, rect_i):
-                        to_keep[j] = False
-            
-            # 只保留未被标记为删除的项
-            for i, item in enumerate(sorted_items):
-                if to_keep[i]:
-                    # 更新实例索引以保持连续
-                    item["instance_index"] = len(filtered_results)
-                    filtered_results.append(item)
-        
-        return filtered_results
+        return results
         
     except Exception as e:
         raise Exception(f"搜索PDF时出错: {str(e)}")
