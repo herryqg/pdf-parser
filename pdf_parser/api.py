@@ -5,7 +5,7 @@ from .fonts.analysis import get_font_cmaps_from_reference, analyze_font_mappings
 
 def parse_page_text(pdf_path, page_num=0):
     """
-    解析PDF页面中的可替换文本并返回列表，严格按照GUI中的实现逻辑。
+    解析PDF页面中的可替换文本并返回列表
     
     Args:
         pdf_path (str): PDF文件路径
@@ -18,7 +18,6 @@ def parse_page_text(pdf_path, page_num=0):
         - 提取文本时会过滤掉被其他文本框完全包含的文本框
         - 文本框按面积从大到小排序，较小的文本框如果完全位于较大文本框内则被过滤
         - 相同文本的不同实例会根据其在文档中的顺序获得正确的坐标
-        - 坐标匹配使用前向匹配：对于内容流中的文本实例，只匹配尚未处理过的页面位置
         - 使用位置哈希确保每个文本实例都匹配到不同的页面位置，避免重复匹配
     """
     import fitz  # PyMuPDF
@@ -37,8 +36,6 @@ def parse_page_text(pdf_path, page_num=0):
         # 获取当前页面
         page = doc_mupdf[page_num]
         
-        # 收集当前页面上的可替换文本
-        # 严格按照pdf_gui.py中collect_decoded_texts()函数的逻辑
         
         # 1. 使用pikepdf收集内容流中的文本
         try:
@@ -60,7 +57,6 @@ def parse_page_text(pdf_path, page_num=0):
                         font_cmap = parse_cmap(cmap_str)
                         font_cmaps[str(font_name)] = font_cmap
                     else:
-                        # 如果没有ToUnicode映射，创建一个基础映射（与GUI逻辑保持一致）
                         from .core.cmap import create_tounicode_cmap
                         encoding_name = '/WinAnsiEncoding'  # 默认
                         if "/Encoding" in font_ref:
@@ -90,7 +86,7 @@ def parse_page_text(pdf_path, page_num=0):
             if content_bytes:
                 content_str = content_bytes.decode('latin1', errors='replace')
                 
-                # 解析文本操作符（与GUI逻辑一致）
+                # 解析文本操作符
                 text_pattern = re.compile(r'(?:\(((?:[^()\\]|\\.)*)\)|\[((?:[^][\\()]|\\.)*)\])\s*T[Jj]')
                 font_pattern = re.compile(r'/([A-Za-z0-9]+)\s+\d+\s+Tf')
                 current_font = None
@@ -109,7 +105,7 @@ def parse_page_text(pdf_path, page_num=0):
                         is_tj = match.group(0).strip().endswith('TJ')
                         inner_text = text_match.group(2) if is_tj else text_match.group(1)
                         
-                        # 处理TJ数组（与GUI逻辑一致）
+                        # 处理TJ数组
                         if is_tj:
                             try:
                                 processed = ''
@@ -133,10 +129,9 @@ def parse_page_text(pdf_path, page_num=0):
                         except Exception as e:
                             print(f"解码文本时出错: {e}")
             
-            # 关闭pikepdf文档
             pdf.close()
             
-            # 2. 从解码项目中提取所有文本项（不再去重，按照内容流原始顺序）
+            # 2. 从解码项目中提取所有文本项
             # 跟踪已处理的文本实例数量
             text_instance_counts = {}
             
@@ -199,7 +194,7 @@ def parse_page_text(pdf_path, page_num=0):
                         "instance_index": current_instance_index  # 添加实例索引以便追踪
                     })
             
-            # 3. 如果没有找到任何文本，回退到PyMuPDF（按顺序全部返回，不再去重）
+            # 3. 如果没有找到任何文本，回退到PyMuPDF
             if not results:
                 try:
                     all_text = page.get_text()
@@ -270,7 +265,7 @@ def parse_page_text(pdf_path, page_num=0):
                     
         except Exception as e:
             print(f"处理页面内容时出错: {e}")
-            # 如果处理失败，至少尝试返回基本的文本内容（保留全部条目，不去重）
+            # 如果处理失败，至少尝试返回基本的文本内容
             try:
                 all_text = page.get_text()
                 text_instance_counts = {}
@@ -585,21 +580,25 @@ class PDFTextReplacer:
 
 def replace_pdf_text(input_pdf, output_pdf, target_text, replacement_text, page_num=0, instance_index=-1, debug=False, allow_auto_insert=False, verbose=1):
     """
-    Replace text in a PDF document (simplified function).
+    Replace text in a PDF.
     
     Args:
-        input_pdf (str): Path to input PDF file
-        output_pdf (str): Path to output PDF file
-        target_text (str): Text to find and replace
-        replacement_text (str): Text to insert as replacement
-        page_num (int): Page number to modify (0-based)
-        instance_index (int): Specific instance to replace (-1 for all instances)
-        debug (bool): Enable debug logging
-        allow_auto_insert (bool): Whether to allow automatic insertion of characters not present in the font
-        verbose (int): 日志输出级别 (0=只输出错误, 1=标准输出, 2=详细输出, 3=调试输出)
+        input_pdf (str): Path to input PDF.
+        output_pdf (str): Path to output PDF.
+        target_text (str): Text to replace.
+        replacement_text (str): Replacement text.
+        page_num (int): Page number (0-based).
+        ttf_file (str, optional): Path to TrueType font file for embedding.
+        log_path (str): Path to log file.
+        instance_index (int): Index of text instance to replace, -1 for all.
+        debug (bool): Whether to enable detailed debug logging.
+        allow_auto_insert (bool): Whether to allow automatic insertion of characters 
+                                 not present in the font. Default is False, which will
+                                 skip replacement when missing characters are detected.
+        verbose (int): log output level (0=only error, 1=standard output, 2=detailed output, 3=debug output)
         
     Returns:
-        bool: True if successful, False otherwise
+        bool: True if successful, False otherwise.
     """
     return replace_text(
         input_pdf=input_pdf,

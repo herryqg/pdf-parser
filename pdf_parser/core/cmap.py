@@ -1,7 +1,6 @@
 """CMap parsing and handling functionality for PDF text processing."""
 
 import re
-
 def parse_cmap(cmap_str):
     """
     Parse a PDF CMap string into a mapping dictionary.
@@ -23,7 +22,6 @@ def parse_cmap(cmap_str):
             target = int(target_hex, 16)
             for i in range(start, end + 1):
                 if i > 0xFF:
-                    # Skip multi-byte encodings, current toolchain only focuses on single-byte area
                     continue
                 cmap[bytes([i])] = chr(target + (i - start))
             continue

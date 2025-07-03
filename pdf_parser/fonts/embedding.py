@@ -29,7 +29,6 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap, log=None):
     
     log.append(f"Updating PDF font mapping for {font_name} in {pdf_path}")
     
-    # Store all characters used with this font across all pages
     all_font_chars = set()
     
     try:
@@ -41,14 +40,12 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap, log=None):
                 
             font_dict = page["/Resources"]["/Font"]
             
-            # Skip if font not in this page
             if font_name not in font_dict.keys():
                 continue
                 
             font_ref = font_dict[font_name]
             log.append(f"Processing font {font_name} on page {page_idx+1}")
             
-            # Get original CMap if exists
             original_cmap = {}
             if "/ToUnicode" in font_ref:
                 from ..core.cmap import parse_cmap
@@ -59,31 +56,26 @@ def update_pdf_font_mapping(pdf_path, font_name, new_cmap, log=None):
             else:
                 log.append("No existing ToUnicode CMap found")
                 
-            # Track characters already in the font
             for _, char in original_cmap.items():
                 all_font_chars.add(char)
                 
-            # Create merged CMap
             merged_cmap = original_cmap.copy()
             for k, v in new_cmap.items():
                 if isinstance(k, int):
-                    # Convert int to bytes for consistency
                     k = bytes([k])
                 merged_cmap[k] = v
                 
-            # Generate new CMap string
             from ..core.cmap import create_cmap_string
             cmap_str = create_cmap_string(merged_cmap)
             log.append(f"New CMap created with {len(merged_cmap)} entries")
             
-            # Replace ToUnicode CMap
             if "/ToUnicode" in font_ref:
                 log.append("Replacing existing ToUnicode CMap")
                 
                 # Delete existing stream to avoid issues
                 del font_ref["/ToUnicode"]
                 
-                # Create new stream with updated mapping
+
                 font_ref["/ToUnicode"] = pikepdf.Stream(pdf, cmap_str.encode())
                 
                 # Generate and embed font subset

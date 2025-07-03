@@ -38,6 +38,7 @@ def main():
     search_parser.add_argument("--case-sensitive", "-cs", action="store_true", help="Enable case-sensitive search")
     search_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
     search_parser.add_argument("--json-file", "-jf", help="Save JSON results to specified file path")
+    search_parser.add_argument("--array-format", "-af", action="store_true", help="Use array format for JSON output instead of hierarchical format")
     
     # 解析命令
     parse_parser = subparsers.add_parser("parse", help="Parse and extract all replaceable text from a PDF page")
@@ -46,6 +47,7 @@ def main():
     parse_parser.add_argument("--json", "-j", action="store_true", help="Output results in JSON format")
     parse_parser.add_argument("--json-file", "-jf", help="Save JSON results to specified file path")
     parse_parser.add_argument("--with-coordinates", "-c", action="store_true", help="Include text coordinates in output")
+    parse_parser.add_argument("--array-format", "-af", action="store_true", default=True, help="Use array format for JSON output instead of hierarchical format")
     
     args = parser.parse_args()
     
@@ -108,49 +110,93 @@ def main():
             # 输出结果
             if results:
                 if args.json:
-                    # 转换为二级结构：文本作为一级键，详细信息作为二级元素
-                    hierarchical_results = {}
-                    
-                    for item in results:
-                        # 文本内容可能位于不同键中，根据结果结构选择
-                        if "text" in item:
-                            text = item["text"]
-                        elif "context" in item:
-                            text = item["context"]
-                        else:
-                            # 如果找不到文本内容，使用args.find作为键
-                            text = args.find
+                    if args.array_format:
+                        # 使用数组格式
+                        array_results = []
+                        global_index = 0
                         
-                        # 移除text/context键，其余信息作为详情
-                        details = {k: v for k, v in item.items() if k != "text" and k != "context"}
+                        # 先按文本分组
+                        text_groups = {}
+                        for item in results:
+                            if "text" in item:
+                                text = item["text"]
+                            elif "context" in item:
+                                text = item["context"]
+                            else:
+                                text = args.find
+                            
+                            if text not in text_groups:
+                                text_groups[text] = []
+                            
+                            details = {k: v for k, v in item.items() if k != "text" and k != "context"}
+                            text_groups[text].append(details)
                         
-                        if text in hierarchical_results:
-                            # 如果文本已存在，将详情添加到列表中
-                            hierarchical_results[text].append(details)
+                        # 展平为数组
+                        for text, details_list in text_groups.items():
+                            for details in details_list:
+                                array_results.append({
+                                    "index": global_index,
+                                    "text": text,
+                                    "details": details
+                                })
+                                global_index += 1
+                        
+                        # JSON格式输出
+                        print(json.dumps(array_results, indent=2))
+                        
+                        # 保存JSON到文件
+                        if args.json_file:
+                            json_file_path = args.json_file
+                            os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
                         else:
-                            # 如果文本不存在，创建新列表
-                            hierarchical_results[text] = [details]
-                    
-                    # JSON格式输出
-                    print(json.dumps(hierarchical_results, indent=2))
-                    
-                    # 保存JSON到文件
-                    if args.json_file:
-                        json_file_path = args.json_file
-                        # 确保输出目录存在
-                        os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
+                            base_name = os.path.basename(args.input)
+                            name, _ = os.path.splitext(base_name)
+                            search_text_safe = args.find.replace(" ", "_")[:20]
+                            page_str = f"_page{args.page}" if args.page is not None else ""
+                            json_file_path = f"output/{name}{page_str}_search_{search_text_safe}.json"
+                            os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        
+                        # 保存JSON到文件
+                        with open(json_file_path, "w", encoding="utf-8") as f:
+                            json.dump(array_results, f, indent=2, ensure_ascii=False)
                     else:
-                        # 如果未指定输出文件名，使用默认文件名
-                        base_name = os.path.basename(args.input)
-                        name, _ = os.path.splitext(base_name)
-                        search_text_safe = args.find.replace(" ", "_")[:20]  # 使用搜索文本的一部分作为文件名
-                        page_str = f"_page{args.page}" if args.page is not None else ""
-                        json_file_path = f"output/{name}{page_str}_search_{search_text_safe}.json"
-                        os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        # 使用原来的层次化结构
+                        hierarchical_results = {}
                         
-                    # 保存JSON到文件
-                    with open(json_file_path, "w", encoding="utf-8") as f:
-                        json.dump(hierarchical_results, f, indent=2, ensure_ascii=False)
+                        for item in results:
+                            if "text" in item:
+                                text = item["text"]
+                            elif "context" in item:
+                                text = item["context"]
+                            else:
+                                text = args.find
+                            
+                            details = {k: v for k, v in item.items() if k != "text" and k != "context"}
+                            
+                            if text in hierarchical_results:
+                                hierarchical_results[text].append(details)
+                            else:
+                                hierarchical_results[text] = [details]
+                        
+                        # JSON格式输出
+                        print(json.dumps(hierarchical_results, indent=2))
+                        
+                        # 保存JSON到文件
+                        if args.json_file:
+                            json_file_path = args.json_file
+                            os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
+                        else:
+                            base_name = os.path.basename(args.input)
+                            name, _ = os.path.splitext(base_name)
+                            search_text_safe = args.find.replace(" ", "_")[:20]
+                            page_str = f"_page{args.page}" if args.page is not None else ""
+                            json_file_path = f"output/{name}{page_str}_search_{search_text_safe}.json"
+                            os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        
+                        # 保存JSON到文件
+                        with open(json_file_path, "w", encoding="utf-8") as f:
+                            json.dump(hierarchical_results, f, indent=2, ensure_ascii=False)
+                    
                     print(f"✅ JSON results saved to: {json_file_path}")
                 else:
                     # 友好格式输出
@@ -188,39 +234,83 @@ def main():
             # 输出结果
             if results:
                 if args.json:
-                    # 转换为二级结构：文本作为一级键，详细信息作为二级元素
-                    hierarchical_results = {}
-                    
-                    for item in results:
-                        text = item["text"]
-                        # 移除text键，其余信息作为详情
-                        details = {k: v for k, v in item.items() if k != "text"}
+                    if args.array_format:
+                        # 使用数组格式
+                        array_results = []
+                        global_index = 0
                         
-                        if text in hierarchical_results:
-                            # 如果文本已存在，将详情添加到列表中
-                            hierarchical_results[text].append(details)
+                        # 先按文本分组
+                        text_groups = {}
+                        for item in results:
+                            if "text" in item:
+                                text = item["text"]
+                                if text not in text_groups:
+                                    text_groups[text] = []
+                                # 移除text键，其余信息作为详情
+                                details = {k: v for k, v in item.items() if k != "text"}
+                                text_groups[text].append(details)
+                        
+                        # 展平为数组
+                        for text, details_list in text_groups.items():
+                            for details in details_list:
+                                array_results.append({
+                                    "index": global_index,
+                                    "text": text,
+                                    "details": details
+                                })
+                                global_index += 1
+                        
+                        # JSON格式输出
+                        print(json.dumps(array_results, indent=2))
+                        
+                        # 保存JSON到文件
+                        if args.json_file:
+                            json_file_path = args.json_file
+                            os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
                         else:
-                            # 如果文本不存在，创建新列表
-                            hierarchical_results[text] = [details]
-                    
-                    # JSON格式输出
-                    print(json.dumps(hierarchical_results, indent=2))
-                    
-                    # 保存JSON到文件
-                    if args.json_file:
-                        json_file_path = args.json_file
-                        # 确保输出目录存在
-                        os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
-                    else:
-                        # 如果未指定输出文件名，使用默认文件名
-                        base_name = os.path.basename(args.input)
-                        name, _ = os.path.splitext(base_name)
-                        json_file_path = f"output/{name}_page{args.page}_parsed.json"
-                        os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                            base_name = os.path.basename(args.input)
+                            name, _ = os.path.splitext(base_name)
+                            json_file_path = f"output/{name}_page{args.page}_parsed.json"
+                            os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
                         
-                    # 保存JSON到文件
-                    with open(json_file_path, "w", encoding="utf-8") as f:
-                        json.dump(hierarchical_results, f, indent=2, ensure_ascii=False)
+                        # 保存JSON到文件
+                        with open(json_file_path, "w", encoding="utf-8") as f:
+                            json.dump(array_results, f, indent=2, ensure_ascii=False)
+                    else:
+                        # 使用原来的层次化结构
+                        hierarchical_results = {}
+                        
+                        for item in results:
+                            text = item["text"]
+                            # 移除text键，其余信息作为详情
+                            details = {k: v for k, v in item.items() if k != "text"}
+                            
+                            if text in hierarchical_results:
+                                # 如果文本已存在，将详情添加到列表中
+                                hierarchical_results[text].append(details)
+                            else:
+                                # 如果文本不存在，创建新列表
+                                hierarchical_results[text] = [details]
+                        
+                        # JSON格式输出
+                        print(json.dumps(hierarchical_results, indent=2))
+                        
+                        # 保存JSON到文件
+                        if args.json_file:
+                            json_file_path = args.json_file
+                            # 确保输出目录存在
+                            os.makedirs(os.path.dirname(json_file_path) if os.path.dirname(json_file_path) else '.', exist_ok=True)
+                        else:
+                            # 如果未指定输出文件名，使用默认文件名
+                            base_name = os.path.basename(args.input)
+                            name, _ = os.path.splitext(base_name)
+                            json_file_path = f"output/{name}_page{args.page}_parsed.json"
+                            os.makedirs(os.path.dirname(json_file_path), exist_ok=True)
+                        
+                        # 保存JSON到文件
+                        with open(json_file_path, "w", encoding="utf-8") as f:
+                            json.dump(hierarchical_results, f, indent=2, ensure_ascii=False)
+                    
                     print(f"✅ JSON results saved to: {json_file_path}")
                 else:
                     # 友好格式输出

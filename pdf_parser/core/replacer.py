@@ -1,5 +1,4 @@
 """Core functionality for PDF text replacement."""
-
 import os
 import re
 import pikepdf
@@ -17,10 +16,10 @@ def log_message(log_list, level, message, print_to_console=True):
     Log a message with a specific level and optional console output.
     
     Args:
-        log_list: 日志列表，用于存储日志消息
-        level: 日志级别 (INFO, DEBUG, WARNING, ERROR, SUCCESS, DATA)
-        message: 日志消息内容
-        print_to_console: 是否将消息打印到控制台
+        log_list: log list, for storing log messages
+        level: log level (INFO, DEBUG, WARNING, ERROR, SUCCESS, DATA)
+        message: log message content
+        print_to_console: whether to print the message to the console
     """
 
     prefix_map = {
@@ -60,31 +59,31 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
         allow_auto_insert (bool): Whether to allow automatic insertion of characters 
                                  not present in the font. Default is False, which will
                                  skip replacement when missing characters are detected.
-        verbose (int): 日志输出级别 (0=只输出错误, 1=标准输出, 2=详细输出, 3=调试输出)
+        verbose (int): log output level (0=only error, 1=standard output, 2=detailed output, 3=debug output)
         
     Returns:
         bool: True if successful, False otherwise.
     """
-    # 根据verbose级别决定是否打印各种日志
+
     def should_print(level):
         if level == "ERROR":
-            return verbose >= 0  # 始终输出错误
+            return verbose >= 0  # always output error
         elif level == "WARNING":
-            return verbose >= 1  # 标准输出包括警告
+            return verbose >= 1  # standard output includes warning
         elif level == "SUCCESS" or level == "INFO":
-            return verbose >= 1  # 标准输出包括信息和成功
+            return verbose >= 1  # standard output includes information and success
         elif level == "DATA":
-            return verbose >= 2  # 详细输出包括数据信息
+            return verbose >= 2  # detailed output includes data information
         elif level == "DEBUG":
-            return verbose >= 3 or debug  # 调试输出
-        return True  # 默认打印
+            return verbose >= 3 or debug  # debug output
+        return True  # default print
     
-    # 重写log_message在当前上下文中的行为
+    # override log_message in current context
     def log(log_list, level, message, print_to_console=True):
         if should_print(level) and print_to_console:
             log_message(log_list, level, message, print_to_console=True)
         else:
-            # 仍然添加到日志列表，但不打印
+            # still add to log list, but not print
             if log_list is not None:
                 prefix = {"INFO": "INFO", "DEBUG": "DEBUG", "WARNING": "WARNING", 
                          "ERROR": "ERROR", "SUCCESS": "SUCCESS", "DATA": "DATA"}.get(level, "INFO")
@@ -543,25 +542,23 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                 # First check all characters in replacement text
                 unsupported_chars_segment = []
                 
-                # 预检查字符支持状态
+
                 for char in replacement_text:
                     is_supported = False
-                    # 严格检查是否在当前字体中
+                    # strictly check if the character is in the current font
                     if char in all_char_codes.get(current_font, {}):
                         is_supported = True
-                    # 空白字符总是支持的
+                    # whitespace characters are always supported
                     elif char in " \t\n\r":
                         is_supported = True
-                    # 对于not allow_auto_insert模式，我们需要更严格，只接受当前字体中的字符
-                    # 不再检查CMap，因为这与实际处理过程保持一致
                     
-                    # 如果不支持且不允许自动插入，添加到不支持字符列表
+                    # if not supported and not allow auto insert, add to unsupported chars list
                     if not is_supported and not allow_auto_insert:
                         unsupported_chars_segment.append(char)
                 
-                # 如果有不支持的字符且不允许自动插入，完整检查并报告每个字符，然后跳过替换
+                # if there are unsupported chars and not allow auto insert, check and report each char, then skip replacement
                 if unsupported_chars_segment and not allow_auto_insert:
-                    # 获取当前字体的完整显示名称
+                    # get the full display name of the current font
                     current_display_font = display_font_name
                     if current_font != current_display_font and not "(" in current_display_font:
                         try:
@@ -588,7 +585,7 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                     current_pos = segment.end()
                     continue
                 
-                # 如果所有字符都支持或允许自动插入，继续正常的处理
+
                 new_codes = []
                 allocated_chars = {}
                 
@@ -597,7 +594,6 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                     # First check if the character exists in the current font and record it clearly
                     is_in_current_font = char in all_char_codes.get(current_font, {})
                     if not is_in_current_font:
-                        # 获取当前字体的完整显示名称
                         current_display_font = display_font_name
                         if current_font != current_display_font and not "(" in current_display_font:
                             try:
@@ -614,10 +610,9 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
 
                         log(log_list, "WARNING", f"Character '{char}' not found in current font {current_display_font}")
                         
-                        # 如果字符不在当前字体且不允许自动插入，则跳过整个替换
                         if not allow_auto_insert:
                             log(log_list, "WARNING", f"  Character '{char}' not available in current font. Auto-insert disabled.")
-                            # 应该不会执行到这里，因为我们已经预检查过了
+                            # 应该不会执行到这里
                             new_segments.append(segment.group(0))
                             current_pos = segment.end()
                             break
@@ -625,12 +620,11 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                         if char not in char_to_code:
                             log(log_list, "WARNING", f"  Character '{char}' not available in current font without borrowing from other fonts.")
                             if not allow_auto_insert:
-                                # 应该不会执行到这里，因为我们已经预检查过了
                                 new_segments.append(segment.group(0))
                                 current_pos = segment.end()
                                 break
                     
-                    # 处理字符编码
+                
                     code = None
                     if is_in_current_font:
                         # Character exists in current font
@@ -644,10 +638,9 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                         allocated_chars[char] = code
                         log(log_list, "INFO", f"  Using mapping from font CMap '{char}': 0x{code:02X}")
                     else:
-                        # 如果不允许自动插入，则直接跳过替换
                         if not allow_auto_insert:
                             log(log_list, "WARNING", f"  Character '{char}' not available in font. Auto-insert disabled.")
-                            # 应该不会执行到这里，因为我们已经预检查过了
+                            # 应该不会执行到这里
                             new_segments.append(segment.group(0))
                             current_pos = segment.end()
                             break
@@ -747,7 +740,6 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                                 print(f"  ❌ Could not find safe code for '{char}', skipping")
                                 continue
                     
-                    # 只有当成功分配了编码时，才添加到new_codes列表
                     if code is not None:
                         new_codes.append(code)
 
@@ -757,11 +749,8 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                     current_pos = segment.end()
                     continue
 
-                # Debug replacement text's character stream mapping
+                # Debug 
                 new_encoded = bytes(new_codes)
-
-                # 检查是否所有字符都被正确处理
-                # 如果不允许自动插入，确认已处理的字符数量应与替换文本字符数相同
                 if not allow_auto_insert and len(new_codes) < len(replacement_text):
                     unhandled_chars = [ch for ch in replacement_text if ch not in allocated_chars]
                     if unhandled_chars:
@@ -773,7 +762,7 @@ def replace_text(input_pdf, output_pdf, target_text, replacement_text, page_num=
                 
                 # 详细输出部分，仅在verbose >= 2时输出
                 if verbose >= 2:
-                    # Debug replacement text's character stream mapping
+                    # Debug
                     log(log_list, "INFO", "\nReplacement text stream mapping:")
                     print_character_stream_mapping(''.join([char for char in replacement_text if char in allocated_chars]), 
                                            new_encoded, font_cmaps[current_font], log_list, debug)
